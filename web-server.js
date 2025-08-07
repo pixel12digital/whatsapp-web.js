@@ -1,46 +1,68 @@
-const express = require('express');
+const http = require('http');
 
 // Tentar diferentes formas de importar o Client
 let Client;
 try {
+    // Tentar importar do módulo principal
     const whatsappWeb = require('./src/Client.js');
     Client = whatsappWeb.Client || whatsappWeb.default?.Client || whatsappWeb;
 } catch (e) {
     try {
+        // Tentar importar do dist
         const whatsappWeb = require('./dist/index.js');
         Client = whatsappWeb.Client || whatsappWeb.default?.Client || whatsappWeb;
     } catch (e2) {
         try {
+            // Tentar importar do módulo raiz
             const whatsappWeb = require('./');
             Client = whatsappWeb.Client || whatsappWeb.default?.Client || whatsappWeb;
         } catch (e3) {
             console.error('❌ Não foi possível carregar o módulo whatsapp-web.js');
+            console.error('Erro 1:', e.message);
+            console.error('Erro 2:', e2.message);
+            console.error('Erro 3:', e3.message);
             process.exit(1);
         }
     }
 }
 
-const app = express();
+// Verificar se Client foi carregado corretamente
+if (typeof Client !== 'function') {
+    console.error('❌ Client não é uma função construtora');
+    console.error('Client type:', typeof Client);
+    process.exit(1);
+}
+
+console.log('✅ Client carregado com sucesso!');
+
 const PORT = process.env.PORT || 3000;
 
-app.use(express.json());
-
-// Rota principal
-app.get('/', (req, res) => {
-    res.json({ 
-        status: 'WhatsApp Web.js Bot Running',
-        timestamp: new Date().toISOString(),
-        service: 'whatsapp-web.js'
-    });
-});
-
-// Rota de saúde
-app.get('/health', (req, res) => {
-    res.json({ status: 'OK', timestamp: new Date().toISOString() });
+// Criar servidor HTTP simples
+const server = http.createServer((req, res) => {
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    
+    if (req.url === '/' || req.url === '/health') {
+        res.writeHead(200);
+        res.end(JSON.stringify({ 
+            status: 'OK', 
+            timestamp: new Date().toISOString(),
+            service: 'whatsapp-web.js'
+        }));
+    } else if (req.url === '/qr') {
+        res.writeHead(200);
+        res.end(JSON.stringify({ 
+            message: 'QR code disponível nos logs',
+            timestamp: new Date().toISOString()
+        }));
+    } else {
+        res.writeHead(404);
+        res.end(JSON.stringify({ error: 'Not found' }));
+    }
 });
 
 // Iniciar servidor
-app.listen(PORT, '0.0.0.0', () => {
+server.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT}`);
     console.log(`🌐 Health check: http://localhost:${PORT}/health`);
     

@@ -20,13 +20,49 @@ let currentQR = null;
 let client = null;
 let isConnected = false;
 
-// Função para iniciar cliente
-async function startClient() {
-    if (client || isConnected) return;
-    
-    console.log('🚀 Iniciando WhatsApp client...');
+// Função para verificar se realmente está conectado
+async function checkConnectionStatus() {
+    if (!client) return false;
     
     try {
+        // Verificar se o cliente está realmente conectado
+        const state = await client.getState();
+        const isReallyConnected = state === 'CONNECTED' || state === 'READY';
+        
+        if (isReallyConnected !== isConnected) {
+            console.log(`🔄 Status mudou: ${isConnected} -> ${isReallyConnected}`);
+            isConnected = isReallyConnected;
+            if (isConnected) {
+                currentQR = null; // Limpar QR quando conectado
+            }
+        }
+        
+        return isReallyConnected;
+    } catch (error) {
+        console.log('❌ Erro ao verificar status:', error.message);
+        return false;
+    }
+}
+
+// Função para iniciar cliente
+async function startClient() {
+    if (client && isConnected) return;
+    
+    console.log('�� Iniciando WhatsApp client...');
+    
+    try {
+        // Se já tem cliente, destruir primeiro
+        if (client) {
+            try {
+                await client.destroy();
+            } catch (e) {
+                console.log('Cliente anterior já destruído');
+            }
+            client = null;
+            isConnected = false;
+            currentQR = null;
+        }
+        
         client = new Client({
             puppeteer: {
                 headless: true,
@@ -47,8 +83,8 @@ async function startClient() {
                     '--no-zygote',
                     '--single-process'
                 ],
-                timeout: 30000,
-                protocolTimeout: 30000
+                timeout: 60000, // Aumentado para 60 segundos
+                protocolTimeout: 60000
             }
         });
 
@@ -63,8 +99,20 @@ async function startClient() {
             currentQR = null;
         });
 
-        client.on('disconnected', () => {
-            console.log('❌ WhatsApp desconectado');
+        client.on('authenticated', () => {
+            console.log('🔐 WhatsApp autenticado!');
+            isConnected = true;
+            currentQR = null;
+        });
+
+        client.on('disconnected', (reason) => {
+            console.log('❌ WhatsApp desconectado:', reason);
+            isConnected = false;
+            currentQR = null;
+        });
+
+        client.on('auth_failure', (msg) => {
+            console.log('❌ Falha na autenticação:', msg);
             isConnected = false;
             currentQR = null;
         });
@@ -72,6 +120,7 @@ async function startClient() {
         await client.initialize();
     } catch (error) {
         console.error('❌ Erro ao inicializar:', error.message);
+        isConnected = false;
     }
 }
 
@@ -93,6 +142,9 @@ const server = http.createServer(async (req, res) => {
     
     try {
         if (path === '/' || path === '/health') {
+            // Verificar status real antes de responder
+            await checkConnectionStatus();
+            
             res.writeHead(200);
             res.end(JSON.stringify({ 
                 success: true,
@@ -101,23 +153,26 @@ const server = http.createServer(async (req, res) => {
                 timestamp: new Date().toISOString()
             }));
         } else if (path === '/qr') {
-            // SEMPRE tentar gerar QR Code se não estiver conectado
+            // SEMPRE verificar status real primeiro
+            await checkConnectionStatus();
+            
+            // Se não está conectado, tentar gerar QR Code
             if (!isConnected) {
                 if (!client) {
                     console.log('🔄 Iniciando cliente para gerar QR Code...');
                     startClient();
                     
-                    // Aguardar 5 segundos para o QR code ser gerado
+                    // Aguardar 8 segundos para o QR code ser gerado
                     let attempts = 0;
-                    while (!currentQR && attempts < 5) {
+                    while (!currentQR && attempts < 8) {
                         await new Promise(resolve => setTimeout(resolve, 1000));
                         attempts++;
-                        console.log(`⏳ Aguardando QR Code... tentativa ${attempts}/5`);
+                        console.log(`⏳ Aguardando QR Code... tentativa ${attempts}/8`);
                     }
                 } else if (!currentQR) {
                     // Se já tem cliente mas não tem QR, aguardar mais um pouco
                     let attempts = 0;
-                    while (!currentQR && attempts < 3) {
+                    while (!currentQR && attempts < 5) {
                         await new Promise(resolve => setTimeout(resolve, 1000));
                         attempts++;
                     }
@@ -132,6 +187,9 @@ const server = http.createServer(async (req, res) => {
                 timestamp: new Date().toISOString()
             }));
         } else if (path === '/status') {
+            // SEMPRE verificar status real
+            await checkConnectionStatus();
+            
             res.writeHead(200);
             res.end(JSON.stringify({ 
                 success: true,
@@ -150,6 +208,9 @@ const server = http.createServer(async (req, res) => {
                 timestamp: new Date().toISOString()
             }));
         } else if (path === '/test') {
+            // Verificar status real antes de responder
+            await checkConnectionStatus();
+            
             res.writeHead(200);
             res.end(JSON.stringify({ 
                 success: true,

@@ -33,8 +33,6 @@ if (typeof Client !== 'function') {
 
 console.log('✅ Client carregado com sucesso!');
 
-const qrcode = require('qrcode-terminal');
-
 // Configuração personalizada para Render.com
 const client = new Client({
     puppeteer: {
@@ -77,12 +75,11 @@ client.on('qr', (qr) => {
     console.log('==========================================');
     console.log(qr);
     console.log('==========================================');
-    qrcode.generate(qr, { small: true });
 });
 
 client.on('ready', () => {
     console.log('✅ Client is ready!');
-    console.log('💬 WhatsApp conectado com sucesso!');
+    console.log('�� WhatsApp conectado com sucesso!');
 });
 
 client.on('message', async (msg) => {

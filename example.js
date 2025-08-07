@@ -1,37 +1,5 @@
-// Tentar diferentes formas de importar o Client
-let Client;
-try {
-    // Tentar importar do módulo principal
-    const whatsappWeb = require('./src/Client.js');
-    Client = whatsappWeb.Client || whatsappWeb.default?.Client || whatsappWeb;
-} catch (e) {
-    try {
-        // Tentar importar do dist
-        const whatsappWeb = require('./dist/index.js');
-        Client = whatsappWeb.Client || whatsappWeb.default?.Client || whatsappWeb;
-    } catch (e2) {
-        try {
-            // Tentar importar do módulo raiz
-            const whatsappWeb = require('./');
-            Client = whatsappWeb.Client || whatsappWeb.default?.Client || whatsappWeb;
-        } catch (e3) {
-            console.error('❌ Não foi possível carregar o módulo whatsapp-web.js');
-            console.error('Erro 1:', e.message);
-            console.error('Erro 2:', e2.message);
-            console.error('Erro 3:', e3.message);
-            process.exit(1);
-        }
-    }
-}
-
-// Verificar se Client foi carregado corretamente
-if (typeof Client !== 'function') {
-    console.error('❌ Client não é uma função construtora');
-    console.error('Client type:', typeof Client);
-    process.exit(1);
-}
-
-console.log('✅ Client carregado com sucesso!');
+const { Client } = require('whatsapp-web.js');
+const qrcode = require('qrcode-terminal');
 
 // Configuração personalizada para Render.com
 const client = new Client({
@@ -55,7 +23,6 @@ const client = new Client({
             '--disable-extensions',
             '--disable-plugins',
             '--disable-images',
-            '--disable-javascript',
             '--disable-background-networking',
             '--disable-sync',
             '--disable-translate',
@@ -64,8 +31,9 @@ const client = new Client({
             '--no-zygote',
             '--single-process'
         ],
-        timeout: 60000,
-        protocolTimeout: 60000
+        timeout: 120000,
+        protocolTimeout: 120000,
+        executablePath: process.env.CHROME_BIN || undefined
     }
 });
 
@@ -75,11 +43,12 @@ client.on('qr', (qr) => {
     console.log('==========================================');
     console.log(qr);
     console.log('==========================================');
+    qrcode.generate(qr, { small: true });
 });
 
 client.on('ready', () => {
     console.log('✅ Client is ready!');
-    console.log('�� WhatsApp conectado com sucesso!');
+    console.log('💬 WhatsApp conectado com sucesso!');
 });
 
 client.on('message', async (msg) => {
@@ -89,4 +58,14 @@ client.on('message', async (msg) => {
     console.log('   To:', msg.to);
 });
 
-client.initialize();
+client.on('disconnected', (reason) => {
+    console.log('Client was disconnected', reason);
+});
+
+client.on('auth_failure', (msg) => {
+    console.error('Authentication failed:', msg);
+});
+
+client.initialize().catch(err => {
+    console.error('Failed to initialize client:', err);
+});

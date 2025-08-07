@@ -19,6 +19,9 @@ const PORT = process.env.PORT || 3000;
 let currentQR = null;
 let client = null;
 let isConnected = false;
+let reconnectAttempts = 0;
+let maxReconnectAttempts = 5;
+let reconnectInterval = null;
 
 // Função para verificar se realmente está conectado
 async function checkConnectionStatus() {
@@ -30,17 +33,45 @@ async function checkConnectionStatus() {
         const isReallyConnected = state === 'CONNECTED' || state === 'READY';
         
         if (isReallyConnected !== isConnected) {
-            console.log(`🔄 Status mudou: ${isConnected} -> ${isReallyConnected}`);
+            console.log(`�� Status mudou: ${isConnected} -> ${isReallyConnected}`);
             isConnected = isReallyConnected;
             if (isConnected) {
                 currentQR = null; // Limpar QR quando conectado
+                reconnectAttempts = 0; // Resetar tentativas de reconexão
+                console.log('✅ Conexão estabelecida e estável');
+            } else {
+                console.log('⚠️ Conexão perdida, iniciando reconexão...');
+                scheduleReconnect();
             }
         }
         
         return isReallyConnected;
     } catch (error) {
         console.log('❌ Erro ao verificar status:', error.message);
+        if (isConnected) {
+            isConnected = false;
+            scheduleReconnect();
+        }
         return false;
+    }
+}
+
+// Função para agendar reconexão
+function scheduleReconnect() {
+    if (reconnectInterval) {
+        clearTimeout(reconnectInterval);
+    }
+    
+    if (reconnectAttempts < maxReconnectAttempts) {
+        const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000); // Exponential backoff, max 30s
+        console.log(`🔄 Agendando reconexão em ${delay/1000}s (tentativa ${reconnectAttempts + 1}/${maxReconnectAttempts})`);
+        
+        reconnectInterval = setTimeout(() => {
+            reconnectAttempts++;
+            startClient();
+        }, delay);
+    } else {
+        console.log('❌ Máximo de tentativas de reconexão atingido');
     }
 }
 
@@ -97,30 +128,35 @@ async function startClient() {
             console.log('✅ WhatsApp conectado!');
             isConnected = true;
             currentQR = null;
+            reconnectAttempts = 0;
         });
 
         client.on('authenticated', () => {
             console.log('🔐 WhatsApp autenticado!');
             isConnected = true;
             currentQR = null;
+            reconnectAttempts = 0;
         });
 
         client.on('disconnected', (reason) => {
             console.log('❌ WhatsApp desconectado:', reason);
             isConnected = false;
             currentQR = null;
+            scheduleReconnect();
         });
 
         client.on('auth_failure', (msg) => {
             console.log('❌ Falha na autenticação:', msg);
             isConnected = false;
             currentQR = null;
+            scheduleReconnect();
         });
 
         await client.initialize();
     } catch (error) {
         console.error('❌ Erro ao inicializar:', error.message);
         isConnected = false;
+        scheduleReconnect();
     }
 }
 
@@ -150,6 +186,7 @@ const server = http.createServer(async (req, res) => {
                 success: true,
                 status: 'OK',
                 connected: isConnected,
+                reconnectAttempts: reconnectAttempts,
                 timestamp: new Date().toISOString()
             }));
         } else if (path === '/qr') {
@@ -194,6 +231,7 @@ const server = http.createServer(async (req, res) => {
             res.end(JSON.stringify({ 
                 success: true,
                 connected: isConnected,
+                reconnectAttempts: reconnectAttempts,
                 timestamp: new Date().toISOString()
             }));
         } else if (path === '/connect') {
@@ -218,12 +256,70 @@ const server = http.createServer(async (req, res) => {
                 connected: isConnected,
                 timestamp: new Date().toISOString()
             }));
+        } else if (path === '/send') {
+            // Verificar status real antes de enviar
+            await checkConnectionStatus();
+            
+            if (!isConnected) {
+                res.writeHead(400);
+                res.end(JSON.stringify({ 
+                    success: false,
+                    error: 'WhatsApp não está conectado'
+                }));
+                return;
+            }
+            
+            // Ler dados do POST
+            let body = '';
+            req.on('data', chunk => {
+                body += chunk.toString();
+            });
+            
+            req.on('end', async () => {
+                try {
+                    const data = JSON.parse(body);
+                    const { to, message } = data;
+                    
+                    if (!to || !message) {
+                        res.writeHead(400);
+                        res.end(JSON.stringify({ 
+                            success: false,
+                            error: 'Destinatário e mensagem são obrigatórios'
+                        }));
+                        return;
+                    }
+                    
+                    console.log(`📤 Enviando mensagem para ${to}: ${message}`);
+                    
+                    // Enviar mensagem
+                    const result = await client.sendMessage(to, message);
+                    
+                    console.log(`✅ Mensagem enviada com sucesso para ${to}`);
+                    
+                    res.writeHead(200);
+                    res.end(JSON.stringify({ 
+                        success: true,
+                        message: 'Mensagem enviada com sucesso',
+                        to: to,
+                        timestamp: new Date().toISOString()
+                    }));
+                } catch (error) {
+                    console.error(`❌ Erro ao enviar mensagem: ${error.message}`);
+                    res.writeHead(500);
+                    res.end(JSON.stringify({ 
+                        success: false,
+                        error: error.message
+                    }));
+                }
+            });
+            
+            return; // Importante: retornar aqui para não executar o código abaixo
         } else {
             res.writeHead(404);
             res.end(JSON.stringify({ 
                 success: false,
                 error: 'Endpoint não encontrado',
-                available: ['/health', '/qr', '/status', '/connect', '/test']
+                available: ['/health', '/qr', '/status', '/connect', '/test', '/send']
             }));
         }
     } catch (error) {
@@ -242,6 +338,11 @@ server.listen(PORT, '0.0.0.0', () => {
     console.log(`📱 QR: http://localhost:${PORT}/qr`);
     
     // INICIAR CLIENTE AUTOMATICAMENTE QUANDO O SERVIDOR INICIA
-    console.log('🔄 Iniciando WhatsApp client automaticamente...');
+    console.log('�� Iniciando WhatsApp client automaticamente...');
     startClient();
+    
+    // Verificar conexão a cada 30 segundos
+    setInterval(async () => {
+        await checkConnectionStatus();
+    }, 30000);
 });

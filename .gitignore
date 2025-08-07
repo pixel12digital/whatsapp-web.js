@@ -75,6 +75,9 @@ typings/
 # local version cache
 .wwebjs_cache/
 
+# Sessions folder
+sessions/
+
 # IDE's
 .idea
 .vscode

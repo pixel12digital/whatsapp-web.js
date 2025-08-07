@@ -1,4 +1,4 @@
-const { Client } = require('whatsapp-web.js');
+const { Client } = require('./src/Client.js');
 const qrcode = require('qrcode-terminal');
 
 // Configuração personalizada para Render.com

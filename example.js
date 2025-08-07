@@ -1,4 +1,38 @@
-const { Client } = require('whatsapp-web.js');
+// Tentar diferentes formas de importar o Client
+let Client;
+try {
+    // Tentar importar do módulo principal
+    const whatsappWeb = require('./src/Client.js');
+    Client = whatsappWeb.Client || whatsappWeb.default?.Client || whatsappWeb;
+} catch (e) {
+    try {
+        // Tentar importar do dist
+        const whatsappWeb = require('./dist/index.js');
+        Client = whatsappWeb.Client || whatsappWeb.default?.Client || whatsappWeb;
+    } catch (e2) {
+        try {
+            // Tentar importar do módulo raiz
+            const whatsappWeb = require('./');
+            Client = whatsappWeb.Client || whatsappWeb.default?.Client || whatsappWeb;
+        } catch (e3) {
+            console.error('❌ Não foi possível carregar o módulo whatsapp-web.js');
+            console.error('Erro 1:', e.message);
+            console.error('Erro 2:', e2.message);
+            console.error('Erro 3:', e3.message);
+            process.exit(1);
+        }
+    }
+}
+
+// Verificar se Client foi carregado corretamente
+if (typeof Client !== 'function') {
+    console.error('❌ Client não é uma função construtora');
+    console.error('Client type:', typeof Client);
+    process.exit(1);
+}
+
+console.log('✅ Client carregado com sucesso!');
+
 const qrcode = require('qrcode-terminal');
 
 // Configuração personalizada para Render.com

@@ -1,70 +1,68 @@
-// ========================================================================
-// Módulo Chat (multicanal) - Pixel12Digital
-// - QR em PNG:        GET /qr.png?port=3000|3001
-// - QR (texto):       GET /qr?port=3000|3001
-// - Health:           GET /health?port=3000|3001
-// - Status:           GET /status?port=3000|3001
-// - Conectar:         GET /connect?port=3000|3001
-// - Enviar texto:     POST /send?port=...
-// - Enviar mídia:     POST /sendMedia?port=...
-// Sessões: ./sessions/pixel12_ia e ./sessions/pixel12_humano
-// ========================================================================
-
+// web-server.js
 const http = require('http');
 const QRCode = require('qrcode');
 
-let Client, LocalAuth, MessageMedia;
+// --- Carregar whatsapp-web.js (fork) de forma defensiva
+let whatsappWeb;
 try {
-  const wweb = require('./');
-  Client = wweb.Client || wweb.default?.Client || wweb;
-  LocalAuth = wweb.LocalAuth || wweb.default?.LocalAuth;
-  MessageMedia = wweb.MessageMedia || wweb.default?.MessageMedia;
+  whatsappWeb = require('./'); // repo raiz
 } catch (e) {
   try {
-    const wweb = require('./dist/index.js');
-    Client = wweb.Client || wweb.default?.Client || wweb;
-    LocalAuth = wweb.LocalAuth || wweb.default?.LocalAuth;
-    MessageMedia = wweb.MessageMedia || wweb.default?.MessageMedia;
+    whatsappWeb = require('./dist/index.js'); // build
   } catch (e2) {
     console.error('❌ Erro ao carregar whatsapp-web.js:', e2.message);
     process.exit(1);
   }
 }
 
+const Client =
+  whatsappWeb.Client || whatsappWeb.default?.Client || whatsappWeb;
+const LocalAuth =
+  whatsappWeb.LocalAuth || whatsappWeb.default?.LocalAuth || undefined;
+const MessageMedia =
+  whatsappWeb.MessageMedia || whatsappWeb.default?.MessageMedia || undefined;
+
 const PORT = process.env.PORT || 3000;
 
-// Configuração dos canais (por porta)
+// ===================== CONFIG DOS CANAIS =====================
 const CANAIS_CONFIG = {
   3000: {
     numero: '554797146908@c.us',
     nome: 'Atendimento IA',
-    descricao: 'Pixel12Digital - IA'
+    descricao: 'Pixel12Digital - IA',
   },
   3001: {
     numero: '554797309525@c.us',
     nome: 'Atendimento Humano',
-    descricao: 'Pixel - Comercial'
-  }
+    descricao: 'Pixel - Comercial',
+  },
 };
 
-// Sessões persistentes por porta (ficam em ./sessions/<clientId>)
-const SESSION_IDS = {
-  3000: 'pixel12_ia',
-  3001: 'pixel12_humano'
-};
-
-// Estado global
+// ===================== ESTADO GLOBAL =====================
 const clients = {};
 const qrCodes = {};
 const connectionStatus = {};
 const reconnectAttempts = {};
 
-// ------------------------------------------------------------------------
-// Inicialização de cliente por porta (com persistência de sessão)
-// ------------------------------------------------------------------------
+// ===================== UTILS =====================
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function json(res, code, obj) {
+  res.writeHead(code, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify(obj));
+}
+
+// Proteção simples via header X-API-TOKEN (opcional)
+function checkToken(req) {
+  const token = process.env.API_TOKEN;
+  if (!token) return true; // se não configurado, libera
+  return req.headers['x-api-token'] === token;
+}
+
+// ===================== WHATSAPP CLIENT =====================
 async function startClient(porta) {
   if (clients[porta]) {
-    console.log(`🔄 Cliente da porta ${porta} já existe`);
+    console.log(`🔄 Cliente ${porta} já existe.`);
     return;
   }
 
@@ -72,10 +70,13 @@ async function startClient(porta) {
 
   try {
     clients[porta] = new Client({
-      authStrategy: new LocalAuth({
-        clientId: SESSION_IDS[porta],
-        dataPath: './sessions'
-      }),
+      // Sessão persistente (vai para ./sessions => Disk do Render)
+      authStrategy: LocalAuth
+        ? new LocalAuth({
+            dataPath: './sessions',
+            clientId: `pixel12_${porta}`, // sessão única por canal
+          })
+        : undefined,
       puppeteer: {
         headless: true,
         args: [
@@ -93,40 +94,39 @@ async function startClient(porta) {
           '--hide-scrollbars',
           '--mute-audio',
           '--no-zygote',
-          '--single-process'
+          '--single-process',
         ],
         timeout: 60000,
-        protocolTimeout: 60000
-      }
+        protocolTimeout: 60000,
+      },
     });
 
     clients[porta].on('qr', (qr) => {
-      console.log(`📱 QR Code recebido para porta ${porta}!`);
-      qrCodes[porta] = qr;
-      connectionStatus[porta] = false;
+      console.log(`📱 QR recebido (porta ${porta})`);
+      qrCodes[porta] = qr; // string para gerar o PNG
     });
 
     clients[porta].on('ready', () => {
-      console.log(`✅ WhatsApp conectado na porta ${porta} (${CANAIS_CONFIG[porta]?.numero})!`);
+      console.log(`✅ Conectado (porta ${porta})`);
       connectionStatus[porta] = true;
       qrCodes[porta] = null;
     });
 
     clients[porta].on('authenticated', () => {
-      console.log(`🔐 WhatsApp autenticado na porta ${porta}!`);
+      console.log(`🔐 Autenticado (porta ${porta})`);
       connectionStatus[porta] = true;
       qrCodes[porta] = null;
     });
 
     clients[porta].on('disconnected', (reason) => {
-      console.log(`❌ WhatsApp desconectado na porta ${porta}: ${reason}`);
+      console.log(`❌ Desconectado (porta ${porta}): ${reason}`);
       connectionStatus[porta] = false;
       qrCodes[porta] = null;
       delete clients[porta];
     });
 
     clients[porta].on('auth_failure', (msg) => {
-      console.log(`❌ Falha na autenticação na porta ${porta}: ${msg}`);
+      console.log(`❌ Falha na autenticação (porta ${porta}): ${msg}`);
       connectionStatus[porta] = false;
       qrCodes[porta] = null;
       delete clients[porta];
@@ -134,57 +134,49 @@ async function startClient(porta) {
 
     await clients[porta].initialize();
   } catch (error) {
-    console.error(`❌ Erro ao inicializar porta ${porta}:`, error.message);
+    console.error(`❌ Erro ao iniciar porta ${porta}:`, error.message);
     connectionStatus[porta] = false;
     delete clients[porta];
   }
 }
 
-// ------------------------------------------------------------------------
-// Verificar status real da conexão
-// ------------------------------------------------------------------------
 async function checkConnectionStatus(porta) {
   if (!clients[porta]) return false;
   try {
-    const state = await clients[porta].getState().catch(() => null);
-    const isConnected = state === 'CONNECTED';
-    connectionStatus[porta] = !!isConnected;
-    return !!isConnected;
-  } catch (error) {
-    console.error(`❌ Erro ao verificar status da porta ${porta}: ${error.message}`);
+    const state = await clients[porta].getState();
+    const ok = state === 'CONNECTED';
+    connectionStatus[porta] = ok;
+    return ok;
+  } catch (e) {
     connectionStatus[porta] = false;
     return false;
   }
 }
 
-// ------------------------------------------------------------------------
-// Servidor HTTP
-// ------------------------------------------------------------------------
+// ===================== HTTP SERVER =====================
 const server = http.createServer(async (req, res) => {
-  // CORS / JSON
-  res.setHeader('Content-Type', 'application/json');
+  // CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-API-TOKEN');
+  if (req.method === 'OPTIONS') return json(res, 200, { ok: true });
 
-  if (req.method === 'OPTIONS') {
-    res.writeHead(200);
-    res.end();
-    return;
+  // Token (exceto health)
+  const path = req.url.split('?')[0];
+  if (!checkToken(req) && path !== '/health') {
+    return json(res, 401, { success: false, error: 'unauthorized' });
   }
 
-  const path = req.url.split('?')[0];
   const urlParams = new URLSearchParams(req.url.split('?')[1] || '');
   const porta = parseInt(urlParams.get('port')) || 3000;
 
   console.log(`📡 ${req.method} ${path} (porta: ${porta})`);
 
   try {
-    // --------------------------------------------------------------------
+    // ---------- HEALTH ----------
     if (path === '/' || path === '/health') {
       const isConnected = await checkConnectionStatus(porta);
-      res.writeHead(200);
-      return res.end(JSON.stringify({
+      return json(res, 200, {
         success: true,
         status: 'OK',
         connected: isConnected,
@@ -192,245 +184,198 @@ const server = http.createServer(async (req, res) => {
         numero: CANAIS_CONFIG[porta]?.numero || 'N/A',
         nome: CANAIS_CONFIG[porta]?.nome || 'N/A',
         reconnectAttempts: reconnectAttempts[porta] || 0,
-        timestamp: new Date().toISOString()
-      }));
+        timestamp: new Date().toISOString(),
+      });
     }
 
-    // --------------------------------------------------------------------
-    else if (path === '/qr') {
-      // Se não está conectado e não tem cliente, iniciar
-      if (!connectionStatus[porta] && !clients[porta]) {
-        console.log(`🔄 Iniciando cliente para gerar QR Code na porta ${porta}...`);
-        startClient(porta);
+    // ---------- CONNECT ----------
+    if (path === '/connect') {
+      if (!clients[porta]) startClient(porta);
+      return json(res, 200, {
+        success: true,
+        message: 'Cliente iniciado',
+        port: porta,
+        numero: CANAIS_CONFIG[porta]?.numero || 'N/A',
+        nome: CANAIS_CONFIG[porta]?.nome || 'N/A',
+        timestamp: new Date().toISOString(),
+      });
+    }
 
-        // Aguardar geração do QR por alguns segundos
-        let attempts = 0;
-        while (!qrCodes[porta] && attempts < 10) {
-          await new Promise(resolve => setTimeout(resolve, 1000));
-          attempts++;
-          console.log(`⏳ Aguardando QR Code porta ${porta}... tentativa ${attempts}/10`);
-        }
+    // ---------- STATUS ----------
+    if (path === '/status') {
+      const isConnected = await checkConnectionStatus(porta);
+      return json(res, 200, {
+        success: true,
+        connected: isConnected,
+        port: porta,
+        numero: CANAIS_CONFIG[porta]?.numero || 'N/A',
+        nome: CANAIS_CONFIG[porta]?.nome || 'N/A',
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    // ---------- QR (TEXTO) ----------
+    if (path === '/qr') {
+      // garanta um cliente rodando e aguarde o QR por alguns segundos
+      if (!connectionStatus[porta] && !clients[porta]) startClient(porta);
+
+      let attempts = 0;
+      while (!qrCodes[porta] && attempts < 12 && !connectionStatus[porta]) {
+        await sleep(1000);
+        attempts++;
       }
 
       const isConnected = await checkConnectionStatus(porta);
-      res.writeHead(200);
-      return res.end(JSON.stringify({
+      return json(res, 200, {
         success: true,
         qr: qrCodes[porta] || 'QR code não disponível',
         connected: isConnected,
         port: porta,
         numero: CANAIS_CONFIG[porta]?.numero || 'N/A',
         nome: CANAIS_CONFIG[porta]?.nome || 'N/A',
-        timestamp: new Date().toISOString()
-      }));
+        timestamp: new Date().toISOString(),
+      });
     }
 
-    // --------------------------------------------------------------------
-    else if (path === '/qr.png') {
-      // QR como imagem PNG
-      const qr = qrCodes[porta];
-      if (!qr) {
-        res.writeHead(503, { 'Content-Type': 'text/plain' });
+    // ---------- QR (PNG) ----------
+    if (path === '/qr.png') {
+      // Gera/espera QR
+      if (!connectionStatus[porta] && !clients[porta]) startClient(porta);
+
+      let attempts = 0;
+      while (!qrCodes[porta] && attempts < 12 && !connectionStatus[porta]) {
+        await sleep(1000);
+        attempts++;
+      }
+
+      if (!qrCodes[porta]) {
+        res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
         return res.end('QR indisponível. Tente novamente em alguns segundos.');
       }
+
       try {
-        const png = await QRCode.toBuffer(qr, { width: 320, margin: 1 });
+        const png = await QRCode.toBuffer(qrCodes[porta], {
+          type: 'png',
+          scale: 8,
+          margin: 2,
+        });
         res.writeHead(200, { 'Content-Type': 'image/png' });
         return res.end(png);
-      } catch (err) {
-        res.writeHead(500, { 'Content-Type': 'text/plain' });
-        return res.end('Erro ao gerar PNG: ' + err.message);
+      } catch (e) {
+        res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
+        return res.end('Falha ao renderizar QR.');
       }
     }
 
-    // --------------------------------------------------------------------
-    else if (path === '/status') {
-      const isConnected = await checkConnectionStatus(porta);
-      res.writeHead(200);
-      return res.end(JSON.stringify({
-        success: true,
-        connected: isConnected,
-        port: porta,
-        numero: CANAIS_CONFIG[porta]?.numero || 'N/A',
-        nome: CANAIS_CONFIG[porta]?.nome || 'N/A',
-        timestamp: new Date().toISOString()
-      }));
-    }
-
-    // --------------------------------------------------------------------
-    else if (path === '/connect') {
-      if (!clients[porta]) startClient(porta);
-      res.writeHead(200);
-      return res.end(JSON.stringify({
-        success: true,
-        message: 'Cliente iniciado',
-        port: porta,
-        numero: CANAIS_CONFIG[porta]?.numero || 'N/A',
-        nome: CANAIS_CONFIG[porta]?.nome || 'N/A',
-        timestamp: new Date().toISOString()
-      }));
-    }
-
-    // --------------------------------------------------------------------
-    else if (path === '/test') {
-      const isConnected = await checkConnectionStatus(porta);
-      res.writeHead(200);
-      return res.end(JSON.stringify({
+    // ---------- TEST ----------
+    if (path === '/test') {
+      const ok = await checkConnectionStatus(porta);
+      return json(res, 200, {
         success: true,
         message: 'Serviço funcionando',
-        connected: isConnected,
+        connected: ok,
         port: porta,
         numero: CANAIS_CONFIG[porta]?.numero || 'N/A',
         nome: CANAIS_CONFIG[porta]?.nome || 'N/A',
-        timestamp: new Date().toISOString()
-      }));
+        timestamp: new Date().toISOString(),
+      });
     }
 
-    // --------------------------------------------------------------------
-    else if (path === '/send') {
-      const isConnected = await checkConnectionStatus(porta);
-      if (!isConnected) {
-        res.writeHead(400);
-        return res.end(JSON.stringify({
-          success: false,
-          error: 'WhatsApp não está conectado',
-          port: porta,
-          numero: CANAIS_CONFIG[porta]?.numero || 'N/A'
-        }));
-      }
+    // ---------- SEND (TEXTO) ----------
+    if (path === '/send' && req.method === 'POST') {
+      const ok = await checkConnectionStatus(porta);
+      if (!ok) return json(res, 400, { success: false, error: 'WhatsApp não está conectado' });
 
-      // Ler dados do POST
       let body = '';
-      req.on('data', chunk => { body += chunk.toString(); });
+      req.on('data', (c) => (body += c.toString()));
       req.on('end', async () => {
         try {
-          const data = JSON.parse(body || '{}');
-          const { to, message } = data;
+          const { to, message } = JSON.parse(body || '{}');
+          if (!to || !message) return json(res, 400, { success: false, error: 'Destinatário e mensagem são obrigatórios' });
 
-          if (!to || !message) {
-            res.writeHead(400);
-            return res.end(JSON.stringify({
-              success: false,
-              error: 'Destinatário (to) e mensagem são obrigatórios',
-              port: porta
-            }));
-          }
-
-          console.log(`📤 Enviando mensagem da porta ${porta} para ${to}: ${message}`);
           await clients[porta].sendMessage(to, message);
-
-          res.writeHead(200);
-          return res.end(JSON.stringify({
+          return json(res, 200, {
             success: true,
-            message: 'Mensagem enviada com sucesso',
-            to, port: porta,
+            message: 'Mensagem enviada',
+            to,
+            port: porta,
             numero: CANAIS_CONFIG[porta]?.numero || 'N/A',
             nome: CANAIS_CONFIG[porta]?.nome || 'N/A',
-            timestamp: new Date().toISOString()
-          }));
-        } catch (error) {
-          console.error(`❌ Erro ao enviar mensagem da porta ${porta}: ${error.message}`);
-          res.writeHead(500);
-          return res.end(JSON.stringify({
-            success: false,
-            error: error.message,
-            port: porta
-          }));
+            timestamp: new Date().toISOString(),
+          });
+        } catch (e) {
+          return json(res, 500, { success: false, error: e.message });
         }
       });
       return;
     }
 
-    // --------------------------------------------------------------------
-    else if (path === '/sendMedia') {
-      const isConnected = await checkConnectionStatus(porta);
-      if (!isConnected) {
-        res.writeHead(400);
-        return res.end(JSON.stringify({
-          success: false,
-          error: 'WhatsApp não está conectado',
-          port: porta
-        }));
-      }
+    // ---------- SEND MEDIA (URL ou BASE64) ----------
+    if (path === '/sendMedia' && req.method === 'POST') {
+      const ok = await checkConnectionStatus(porta);
+      if (!ok) return json(res, 400, { success: false, error: 'WhatsApp não está conectado' });
 
       let body = '';
-      req.on('data', chunk => { body += chunk.toString(); });
-
+      req.on('data', (c) => (body += c.toString()));
       req.on('end', async () => {
         try {
           const data = JSON.parse(body || '{}');
-          const { to, mediaUrl, caption, mediaBase64, mimeType } = data;
-
-          if (!to || (!mediaUrl && !mediaBase64)) {
-            res.writeHead(400);
-            return res.end(JSON.stringify({
-              success: false,
-              error: 'Parâmetros obrigatórios: to e (mediaUrl OU mediaBase64+mimeType)'
-            }));
-          }
+          const { to, mediaUrl, base64, mimeType, filename, caption, sendAudioAsVoice } = data || {};
+          if (!to) return json(res, 400, { success: false, error: 'Destinatário é obrigatório' });
 
           let media;
-          if (mediaUrl) {
+          if (mediaUrl && MessageMedia?.fromUrl) {
             media = await MessageMedia.fromUrl(mediaUrl);
+          } else if (base64 && mimeType) {
+            media = new MessageMedia(mimeType, base64, filename || 'file');
           } else {
-            if (!mimeType) throw new Error('mimeType é obrigatório quando usar mediaBase64');
-            media = new MessageMedia(mimeType, mediaBase64, 'arquivo');
+            return json(res, 400, { success: false, error: 'Informe mediaUrl OU base64+mimeType' });
           }
 
-          const opts = {};
-          if (media.mimetype?.startsWith('audio/')) {
-            // Envia como mensagem de voz (PTT)
-            opts.sendAudioAsVoice = true;
-          }
-          if (caption) opts.caption = caption;
+          await clients[porta].sendMessage(to, media, {
+            caption: caption || '',
+            sendAudioAsVoice: !!sendAudioAsVoice, // true = PTT
+          });
 
-          await clients[porta].sendMessage(to, media, opts);
-
-          res.writeHead(200);
-          return res.end(JSON.stringify({ success: true, port: porta, to }));
-        } catch (err) {
-          console.error(`❌ Erro em /sendMedia [${porta}]:`, err);
-          res.writeHead(500);
-          return res.end(JSON.stringify({ success: false, error: err.message }));
+          return json(res, 200, {
+            success: true,
+            message: 'Mídia enviada',
+            to,
+            port: porta,
+            timestamp: new Date().toISOString(),
+          });
+        } catch (e) {
+          return json(res, 500, { success: false, error: e.message });
         }
       });
       return;
     }
 
-    // --------------------------------------------------------------------
-    // 404
-    else {
-      res.writeHead(404);
-      return res.end(JSON.stringify({
-        success: false,
-        error: 'Endpoint não encontrado',
-        available: ['/health', '/qr', '/qr.png', '/status', '/connect', '/test', '/send', '/sendMedia'],
-        canais: Object.keys(CANAIS_CONFIG)
-      }));
-    }
+    // ---------- 404 ----------
+    return json(res, 404, {
+      success: false,
+      error: 'Endpoint não encontrado',
+      available: ['/health', '/connect', '/status', '/qr', '/qr.png', '/test', '/send', '/sendMedia'],
+      canais: Object.keys(CANAIS_CONFIG),
+    });
   } catch (error) {
     console.error('❌ Erro:', error.message);
-    res.writeHead(500);
-    return res.end(JSON.stringify({
-      success: false,
-      error: error.message,
-      port: porta
-    }));
+    return json(res, 500, { success: false, error: error.message, port: porta });
   }
 });
 
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Servidor rodando na porta ${PORT}`);
-  console.log(`🌐 Health: http://localhost:${PORT}/health`);
-  console.log(`📱 QR texto: http://localhost:${PORT}/qr?port=3000`);
-  console.log(`🖼️  QR PNG : http://localhost:${PORT}/qr.png?port=3000`);
+  console.log(`🧪 Health: http://localhost:${PORT}/health`);
+  console.log(`🖼️  QR PNG 3000: http://localhost:${PORT}/qr.png?port=3000`);
+  console.log(`🖼️  QR PNG 3001: http://localhost:${PORT}/qr.png?port=3001`);
 
-  // Iniciar os dois clientes automaticamente
-  console.log('🔄 Iniciando clientes WhatsApp automaticamente...');
-  startClient(3000); // Atendimento IA
-  startClient(3001); // Atendimento Humano
+  console.log('🔄 Iniciando clientes automaticamente...');
+  // sobe 3000 e 8s depois 3001 (ajuda no consumo de RAM/CPU)
+  startClient(3000);
+  setTimeout(() => startClient(3001), 8000);
 
-  // Verificar status periodicamente
+  // verificação periódica
   setInterval(async () => {
     for (const p of Object.keys(CANAIS_CONFIG)) {
       await checkConnectionStatus(parseInt(p, 10));

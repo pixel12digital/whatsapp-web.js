@@ -1,5 +1,4 @@
 const { Client } = require('./src/Client.js');
-const qrcode = require('qrcode-terminal');
 
 // Configuração personalizada para Render.com
 const client = new Client({
@@ -38,17 +37,23 @@ const client = new Client({
 });
 
 client.on('qr', (qr) => {
-    console.log('QR RECEIVED', qr);
-    qrcode.generate(qr, { small: true });
+    console.log('QR RECEIVED:', qr);
+    console.log('📱 Escaneie este QR code com seu WhatsApp:');
+    console.log('==========================================');
+    console.log(qr);
+    console.log('==========================================');
 });
 
 client.on('ready', () => {
-    console.log('Client is ready!');
+    console.log('✅ Client is ready!');
+    console.log('�� WhatsApp conectado com sucesso!');
 });
 
 client.on('message', async (msg) => {
     if (msg.fromMe) return;
-    console.log('MESSAGE RECEIVED', msg);
+    console.log('📨 MESSAGE RECEIVED:', msg.body);
+    console.log('   From:', msg.from);
+    console.log('   To:', msg.to);
 });
 
 client.initialize();

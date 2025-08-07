@@ -101,15 +101,26 @@ const server = http.createServer(async (req, res) => {
                 timestamp: new Date().toISOString()
             }));
         } else if (path === '/qr') {
-            // SEMPRE tentar gerar QR Code
-            if (!isConnected && !client) {
-                startClient();
-                
-                // Aguardar 3 segundos
-                let attempts = 0;
-                while (!currentQR && attempts < 3) {
-                    await new Promise(resolve => setTimeout(resolve, 1000));
-                    attempts++;
+            // SEMPRE tentar gerar QR Code se não estiver conectado
+            if (!isConnected) {
+                if (!client) {
+                    console.log('🔄 Iniciando cliente para gerar QR Code...');
+                    startClient();
+                    
+                    // Aguardar 5 segundos para o QR code ser gerado
+                    let attempts = 0;
+                    while (!currentQR && attempts < 5) {
+                        await new Promise(resolve => setTimeout(resolve, 1000));
+                        attempts++;
+                        console.log(`⏳ Aguardando QR Code... tentativa ${attempts}/5`);
+                    }
+                } else if (!currentQR) {
+                    // Se já tem cliente mas não tem QR, aguardar mais um pouco
+                    let attempts = 0;
+                    while (!currentQR && attempts < 3) {
+                        await new Promise(resolve => setTimeout(resolve, 1000));
+                        attempts++;
+                    }
                 }
             }
             
@@ -168,4 +179,8 @@ server.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Servidor rodando na porta ${PORT}`);
     console.log(`🌐 Health: http://localhost:${PORT}/health`);
     console.log(`📱 QR: http://localhost:${PORT}/qr`);
+    
+    // INICIAR CLIENTE AUTOMATICAMENTE QUANDO O SERVIDOR INICIA
+    console.log('🔄 Iniciando WhatsApp client automaticamente...');
+    startClient();
 });

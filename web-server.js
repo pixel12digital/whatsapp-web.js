@@ -83,7 +83,7 @@ async function checkChromeAvailability() {
     
     console.log('🔍 Verificando disponibilidade do Chrome...');
     console.log('📍 Chrome path:', chromePath);
-    console.log('📁 Cache dir:', cacheDir);
+    console.log('�� Cache dir:', cacheDir);
     
     // Verificar se o diretório de cache existe
     if (!fs.existsSync(cacheDir)) {
@@ -436,4 +436,4 @@ server.listen(PORT, '0.0.0.0', async () => {
       console.error(`Falha ao iniciar canal ${porta}:`, err.message)
     );
   }
-}); 
+});

@@ -93,7 +93,8 @@ async function checkChromeAvailability() {
       '/snap/bin/chromium',
       '/opt/google/chrome/chrome',
       '/usr/bin/chrome',
-      '/usr/bin/chrome-browser'
+      '/usr/bin/chrome-browser',
+      '/usr/bin/google-chrome-stable'
     ];
     
     console.log('🔍 Verificando caminhos do Chrome...');

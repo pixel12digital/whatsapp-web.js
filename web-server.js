@@ -15,6 +15,11 @@
  * - Configuração otimizada para Render.com com Puppeteer.
  */
 
+// Forçar uso do Chrome do sistema
+process.env.PUPPETEER_SKIP_CHROMIUM_DOWNLOAD = 'true';
+process.env.PUPPETEER_EXECUTABLE_PATH = undefined;
+process.env.CHROME_BIN = undefined;
+
 const http = require('http');
 const express = require('express');
 const cors = require('cors');
@@ -157,6 +162,11 @@ function buildClient(porta) {
   const cfg = CANAIS_CONFIG[porta];
   if (!cfg) throw new Error(`Porta ${porta} não mapeada em CANAIS_CONFIG.`);
 
+  // Forçar uso do Chrome do sistema
+  process.env.PUPPETEER_SKIP_CHROMIUM_DOWNLOAD = 'true';
+  process.env.PUPPETEER_EXECUTABLE_PATH = undefined;
+  process.env.CHROME_BIN = undefined;
+
   // Configuração do Puppeteer otimizada para Render - SEM executablePath
   const puppeteerConfig = {
     // Argumentos do Chrome para ambiente Render
@@ -185,10 +195,12 @@ function buildClient(porta) {
     headless: true,
     timeout: 60000,
     protocolTimeout: 60000,
-    // NÃO definir executablePath - deixar Puppeteer usar Chrome do sistema
+    // Forçar uso do Chrome do sistema
+    executablePath: undefined,
+    cacheDirectory: undefined,
   };
 
-  console.log(`🧭 Configurando cliente para porta ${porta} com Chrome do sistema`);
+  console.log(`🧭 Configurando cliente para porta ${porta} com Chrome do sistema (forçado)`);
 
   const client = new Client({
     puppeteer: puppeteerConfig,
@@ -269,6 +281,12 @@ async function startClient(porta) {
       // Tentar recriar o cliente sem executablePath e com configuração mais flexível
       try {
         clients.delete(porta);
+        
+        // Forçar uso do Chrome do sistema no fallback também
+        process.env.PUPPETEER_SKIP_CHROMIUM_DOWNLOAD = 'true';
+        process.env.PUPPETEER_EXECUTABLE_PATH = undefined;
+        process.env.CHROME_BIN = undefined;
+        
         const fallbackClient = new Client({
           puppeteer: {
             args: [
@@ -296,7 +314,9 @@ async function startClient(porta) {
             headless: true,
             timeout: 60000,
             protocolTimeout: 60000,
-            // NÃO definir executablePath - usar Chrome do sistema
+            // Forçar uso do Chrome do sistema
+            executablePath: undefined,
+            cacheDirectory: undefined,
           },
           authStrategy: new LocalAuth({
             clientId: CANAIS_CONFIG[porta].sessionId,
@@ -357,6 +377,11 @@ async function startClient(porta) {
           console.log(`🔄 Tentativa final para porta ${porta} com configuração mínima...`);
           clients.delete(porta);
           
+          // Forçar uso do Chrome do sistema na configuração mínima também
+          process.env.PUPPETEER_SKIP_CHROMIUM_DOWNLOAD = 'true';
+          process.env.PUPPETEER_EXECUTABLE_PATH = undefined;
+          process.env.CHROME_BIN = undefined;
+          
           const minimalClient = new Client({
             puppeteer: {
               args: [
@@ -375,7 +400,9 @@ async function startClient(porta) {
               headless: true,
               timeout: 120000,
               protocolTimeout: 120000,
-              // NÃO definir executablePath - usar Chrome do sistema
+              // Forçar uso do Chrome do sistema
+              executablePath: undefined,
+              cacheDirectory: undefined,
             },
             authStrategy: new LocalAuth({
               clientId: CANAIS_CONFIG[porta].sessionId,

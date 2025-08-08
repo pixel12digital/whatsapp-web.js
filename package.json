@@ -10,7 +10,7 @@
     "shell": "node --experimental-repl-await ./shell.js",
     "generate-docs": "npx jsdoc --configure .jsdoc.json --verbose",
 
-    "postinstall": "npx puppeteer browsers install chrome --cache-dir=/opt/render/.cache/puppeteer || npx puppeteer browsers install chrome",
+    "postinstall": "echo 'Using system Chrome - no specific installation needed'",
 
     "start": "node web-server.js"
   },

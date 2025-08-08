@@ -12,6 +12,7 @@
  * Observações:
  * - Persistência das sessões em ./sessions (necessário Disk no Render).
  * - Compatível com execução dentro do repositório do whatsapp-web.js (usa require('./')).
+ * - Configuração otimizada para Render.com com Puppeteer.
  */
 
 const http = require('http');
@@ -20,6 +21,9 @@ const cors = require('cors');
 const path = require('path');
 const fs = require('fs-extra');
 const QRCode = require('qrcode');
+
+// ---------- Carregar configuração do Puppeteer para Render ----------
+const { createPuppeteerInstance, checkChromeAvailability } = require('./web-server-config');
 
 // ---------- Carregar whatsapp-web.js mesmo se estivermos dentro do fork ----------
 let Client, LocalAuth, MessageMedia;
@@ -72,36 +76,27 @@ const lastState = new Map();         // porta -> state string
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /**
- * Encontra o executável do Chrome baixado pelo Puppeteer no Render
- * (via npx puppeteer browsers install chrome --cache-dir=/opt/render/.cache/puppeteer)
+ * Verifica e configura o Puppeteer para o ambiente Render
  */
-function findChromeExecutable() {
-  // Permite override manual (útil para testes)
-  if (process.env.PUPPETEER_EXECUTABLE_PATH) {
-    return process.env.PUPPETEER_EXECUTABLE_PATH;
-  }
-
-  const base = process.env.PUPPETEER_CACHE_DIR || '/opt/render/.cache/puppeteer';
-  const chromeRoot = path.join(base, 'chrome');
+async function setupPuppeteer() {
+  console.log('🔧 Configurando Puppeteer para Render.com...');
+  
   try {
-    if (!fs.existsSync(chromeRoot)) return null;
-
-    // Ex.: linux-127.0.6533.88/chrome-linux64/chrome
-    const linuxDirs = fs.readdirSync(chromeRoot)
-      .filter((n) => n.startsWith('linux-'))
-      .sort()
-      .reverse();
-
-    for (const dir of linuxDirs) {
-      const candidate = path.join(chromeRoot, dir, 'chrome-linux64', 'chrome');
-      if (fs.existsSync(candidate)) {
-        return candidate;
-      }
+    // Verificar se o Chrome está disponível
+    const isAvailable = await checkChromeAvailability();
+    
+    if (!isAvailable) {
+      console.warn('⚠️ Chrome não encontrado. Tentando usar configuração padrão...');
+      return null;
     }
-  } catch (err) {
-    console.error('Erro procurando Chrome no cache do Puppeteer:', err.message);
+    
+    console.log('✅ Chrome encontrado e configurado para Render.com');
+    return true;
+    
+  } catch (error) {
+    console.error('❌ Erro ao configurar Puppeteer:', error.message);
+    return null;
   }
-  return null;
 }
 
 // ---------- Criação do Client ----------
@@ -109,36 +104,42 @@ function buildClient(porta) {
   const cfg = CANAIS_CONFIG[porta];
   if (!cfg) throw new Error(`Porta ${porta} não mapeada em CANAIS_CONFIG.`);
 
-  const executablePath = findChromeExecutable();
-  if (!executablePath) {
-    console.warn('⚠️  Chrome não encontrado no cache do Puppeteer. Verifique o build command e o PUPPETEER_CACHE_DIR.');
-  } else {
-    console.log(`🧭 Chrome detectado: ${executablePath}`);
-  }
+  // Configuração do Puppeteer otimizada para Render
+  const puppeteerConfig = {
+    // Argumentos do Chrome para ambiente Render
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-accelerated-2d-canvas',
+      '--no-first-run',
+      '--no-zygote',
+      '--single-process',
+      '--disable-gpu',
+      '--disable-background-timer-throttling',
+      '--disable-backgrounding-occluded-windows',
+      '--disable-renderer-backgrounding',
+      '--disable-features=TranslateUI',
+      '--disable-ipc-flooding-protection',
+      '--disable-extensions',
+      '--disable-plugins',
+      '--disable-background-networking',
+      '--disable-sync',
+      '--disable-translate',
+      '--hide-scrollbars',
+      '--mute-audio'
+    ],
+    headless: true,
+    executablePath: process.env.CHROME_BIN || '/opt/render/.cache/puppeteer/chrome-linux/chrome',
+    userDataDir: process.env.PUPPETEER_CACHE_DIR || '/opt/render/.cache/puppeteer',
+    timeout: 60000,
+    protocolTimeout: 60000,
+  };
+
+  console.log(`🧭 Configurando cliente para porta ${porta} com Chrome: ${puppeteerConfig.executablePath}`);
 
   const client = new Client({
-    puppeteer: {
-      executablePath,            // <--- usa o Chrome baixado (se encontrado)
-      headless: true,
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-gpu',
-        '--no-first-run',
-        '--disable-extensions',
-        '--disable-plugins',
-        '--disable-background-networking',
-        '--disable-sync',
-        '--disable-translate',
-        '--hide-scrollbars',
-        '--mute-audio',
-        '--no-zygote',
-        '--single-process',
-      ],
-      timeout: 60000,
-      protocolTimeout: 60000,
-    },
+    puppeteer: puppeteerConfig,
     // Persistência de sessão
     authStrategy: new LocalAuth({
       clientId: cfg.sessionId,            // cada canal tem um clientId distinto
@@ -378,6 +379,9 @@ const server = http.createServer(app);
 server.listen(PORT, '0.0.0.0', async () => {
   console.log(`🚀 Servidor rodando na porta ${PORT}`);
   console.log(`🌐 Health: http://localhost:${PORT}/health`);
+
+  // Configurar Puppeteer antes de iniciar os clientes
+  await setupPuppeteer();
 
   // Sobe os 2 canais automaticamente
   for (const porta of Object.keys(CANAIS_CONFIG).map(Number)) {

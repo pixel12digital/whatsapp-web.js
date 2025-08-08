@@ -71,13 +71,54 @@ const lastState = new Map();         // porta -> state string
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/**
+ * Encontra o executável do Chrome baixado pelo Puppeteer no Render
+ * (via npx puppeteer browsers install chrome --cache-dir=/opt/render/.cache/puppeteer)
+ */
+function findChromeExecutable() {
+  // Permite override manual (útil para testes)
+  if (process.env.PUPPETEER_EXECUTABLE_PATH) {
+    return process.env.PUPPETEER_EXECUTABLE_PATH;
+  }
+
+  const base = process.env.PUPPETEER_CACHE_DIR || '/opt/render/.cache/puppeteer';
+  const chromeRoot = path.join(base, 'chrome');
+  try {
+    if (!fs.existsSync(chromeRoot)) return null;
+
+    // Ex.: linux-127.0.6533.88/chrome-linux64/chrome
+    const linuxDirs = fs.readdirSync(chromeRoot)
+      .filter((n) => n.startsWith('linux-'))
+      .sort()
+      .reverse();
+
+    for (const dir of linuxDirs) {
+      const candidate = path.join(chromeRoot, dir, 'chrome-linux64', 'chrome');
+      if (fs.existsSync(candidate)) {
+        return candidate;
+      }
+    }
+  } catch (err) {
+    console.error('Erro procurando Chrome no cache do Puppeteer:', err.message);
+  }
+  return null;
+}
+
 // ---------- Criação do Client ----------
 function buildClient(porta) {
   const cfg = CANAIS_CONFIG[porta];
   if (!cfg) throw new Error(`Porta ${porta} não mapeada em CANAIS_CONFIG.`);
 
+  const executablePath = findChromeExecutable();
+  if (!executablePath) {
+    console.warn('⚠️  Chrome não encontrado no cache do Puppeteer. Verifique o build command e o PUPPETEER_CACHE_DIR.');
+  } else {
+    console.log(`🧭 Chrome detectado: ${executablePath}`);
+  }
+
   const client = new Client({
     puppeteer: {
+      executablePath,            // <--- usa o Chrome baixado (se encontrado)
       headless: true,
       args: [
         '--no-sandbox',

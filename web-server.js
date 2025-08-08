@@ -95,7 +95,16 @@ async function checkChromeAvailability() {
       '/opt/google/chrome/chrome',
       '/usr/bin/chrome',
       '/usr/bin/chrome-browser',
-      '/opt/render/.cache/puppeteer/chrome/linux-127.0.6533.88/chrome-linux64/chrome'
+      '/opt/render/.cache/puppeteer/chrome/linux-127.0.6533.88/chrome-linux64/chrome',
+      '/opt/render/.cache/puppeteer/chrome/linux-*/chrome-linux64/chrome',
+      '/usr/bin/google-chrome-stable',
+      '/usr/bin/chromium-browser',
+      '/usr/bin/chromium',
+      '/usr/bin/google-chrome',
+      '/snap/bin/chromium',
+      '/opt/google/chrome/chrome',
+      '/usr/bin/chrome',
+      '/usr/bin/chrome-browser'
     ];
     
     for (const chromePath of possiblePaths) {
@@ -104,6 +113,19 @@ async function checkChromeAvailability() {
         process.env.CHROME_BIN = chromePath;
         return chromePath;
       }
+    }
+    
+    // Tentar encontrar Chrome usando comando 'which'
+    try {
+      const { execSync } = require('child_process');
+      const chromePath = execSync('which google-chrome-stable', { encoding: 'utf8' }).trim();
+      if (chromePath && fs.existsSync(chromePath)) {
+        console.log('✅ Chrome encontrado via comando which:', chromePath);
+        process.env.CHROME_BIN = chromePath;
+        return chromePath;
+      }
+    } catch (e) {
+      // Ignorar erro se o comando 'which' não funcionar
     }
     
     console.log('⚠️ Chrome não encontrado em caminhos específicos. Usando Chrome do Puppeteer...');
@@ -140,7 +162,7 @@ async function setupPuppeteer() {
 }
 
 // ---------- Criação do Client ----------
-function buildClient(porta) {
+function buildClient(porta, chromePath = null) {
   const cfg = CANAIS_CONFIG[porta];
   if (!cfg) throw new Error(`Porta ${porta} não mapeada em CANAIS_CONFIG.`);
 
@@ -175,7 +197,6 @@ function buildClient(porta) {
   };
 
   // Adicionar executablePath apenas se o Chrome for encontrado
-  const chromePath = process.env.CHROME_BIN;
   if (chromePath && fs.existsSync(chromePath)) {
     puppeteerConfig.executablePath = chromePath;
     console.log(`🧭 Configurando cliente para porta ${porta} com Chrome: ${chromePath}`);
@@ -216,7 +237,7 @@ function buildClient(porta) {
     clients.delete(porta);
     setTimeout(() => {
       console.log(`🔄 Recriando cliente (porta ${porta})...`);
-      startClient(porta).catch(err => console.error(`Erro recriando ${porta}:`, err.message));
+      startClient(porta, null).catch(err => console.error(`Erro recriando ${porta}:`, err.message));
     }, 5000);
   });
 
@@ -234,7 +255,7 @@ function buildClient(porta) {
 }
 
 // ---------- Inicializar cliente de uma porta ----------
-async function startClient(porta) {
+async function startClient(porta, chromePath = null) {
   if (!CANAIS_CONFIG[porta]) throw new Error(`Porta ${porta} não configurada.`);
   if (clients.has(porta)) {
     console.log(`🔄 Cliente já existe (porta ${porta})`);
@@ -242,7 +263,7 @@ async function startClient(porta) {
   }
 
   console.log(`🚀 Iniciando WhatsApp client (porta ${porta}) [${CANAIS_CONFIG[porta].nome}]`);
-  const client = buildClient(porta);
+  const client = buildClient(porta, chromePath);
   clients.set(porta, client);
   connectionStatus.set(porta, false);
   qrCodes.set(porta, null);
@@ -323,7 +344,7 @@ async function startClient(porta) {
           clients.delete(porta);
           setTimeout(() => {
             console.log(`🔄 Recriando cliente (porta ${porta})...`);
-            startClient(porta).catch(err => console.error(`Erro recriando ${porta}:`, err.message));
+            startClient(porta, null).catch(err => console.error(`Erro recriando ${porta}:`, err.message));
           }, 5000);
         });
         
@@ -402,7 +423,7 @@ async function startClient(porta) {
             clients.delete(porta);
             setTimeout(() => {
               console.log(`🔄 Recriando cliente (porta ${porta})...`);
-              startClient(porta).catch(err => console.error(`Erro recriando ${porta}:`, err.message));
+              startClient(porta, null).catch(err => console.error(`Erro recriando ${porta}:`, err.message));
             }, 5000);
           });
           
@@ -493,7 +514,7 @@ app.get('/status', async (req, res) => {
 app.get('/connect', async (req, res) => {
   const porta = getPortFromQuery(req);
   try {
-    await startClient(porta);
+    await startClient(porta, null);
     res.json({
       success: true,
       message: 'Cliente iniciado',
@@ -512,7 +533,7 @@ app.get('/qr', async (req, res) => {
 
   // Se ainda não existe cliente, inicializa para gerar QR
   if (!clients.get(porta)) {
-    try { await startClient(porta); } catch (_) {}
+    try { await startClient(porta, null); } catch (_) {}
     // espera um pouco pelo evento 'qr'
     for (let i = 0; i < 10 && !qrCodes.get(porta); i++) {
       await sleep(1000);
@@ -534,7 +555,7 @@ app.get('/qr.png', async (req, res) => {
   const porta = getPortFromQuery(req);
 
   if (!clients.get(porta)) {
-    try { await startClient(porta); } catch (_) {}
+    try { await startClient(porta, null); } catch (_) {}
     for (let i = 0; i < 10 && !qrCodes.get(porta); i++) {
       await sleep(1000);
     }
@@ -600,11 +621,11 @@ server.listen(PORT, '0.0.0.0', async () => {
   console.log(`🌐 Health: http://localhost:${PORT}/health`);
 
   // Configurar Puppeteer antes de iniciar os clientes
-  await setupPuppeteer();
+  const chromePath = await setupPuppeteer();
 
   // Sobe os 2 canais automaticamente
   for (const porta of Object.keys(CANAIS_CONFIG).map(Number)) {
-    startClient(porta).catch((err) =>
+    startClient(porta, chromePath).catch((err) =>
       console.error(`Falha ao iniciar canal ${porta}:`, err.message)
     );
   }

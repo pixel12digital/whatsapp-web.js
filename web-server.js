@@ -90,36 +90,37 @@ async function checkChromeAvailability() {
       console.log('⚠️ Diretório de cache não encontrado:', cacheDir);
     }
     
-    // Verificar se o Chrome existe
-    if (!fs.existsSync(chromePath)) {
-      console.log('⚠️ Chrome não encontrado em:', chromePath);
-      
-      // Tentar encontrar o Chrome em outros locais possíveis
-      const possiblePaths = [
-        '/opt/render/.cache/puppeteer/chrome/linux-127.0.6533.88/chrome-linux64/chrome',
-        '/usr/bin/google-chrome-stable',
-        '/usr/bin/chromium-browser',
-        '/usr/bin/chromium',
-        '/usr/bin/google-chrome',
-        '/snap/bin/chromium',
-        '/opt/google/chrome/chrome'
-      ];
-      
-      for (const path of possiblePaths) {
-        if (fs.existsSync(path)) {
-          console.log('✅ Chrome encontrado em:', path);
-          process.env.CHROME_BIN = path;
-          return true;
-        }
-      }
-      
-      // Se não encontrou em nenhum local específico, tentar usar o Chrome padrão do sistema
-      console.log('⚠️ Chrome não encontrado em caminhos específicos. Tentando usar Chrome padrão do sistema...');
-      return false;
+    // Verificar se o Chrome existe no caminho principal
+    if (fs.existsSync(chromePath)) {
+      console.log('✅ Chrome encontrado em:', chromePath);
+      process.env.CHROME_BIN = chromePath;
+      return true;
     }
     
-    console.log('✅ Chrome encontrado e disponível');
-    return true;
+    console.log('⚠️ Chrome não encontrado em:', chromePath);
+    
+    // Tentar encontrar o Chrome em outros locais possíveis
+    const possiblePaths = [
+      '/opt/render/.cache/puppeteer/chrome/linux-127.0.6533.88/chrome-linux64/chrome',
+      '/usr/bin/google-chrome-stable',
+      '/usr/bin/chromium-browser',
+      '/usr/bin/chromium',
+      '/usr/bin/google-chrome',
+      '/snap/bin/chromium',
+      '/opt/google/chrome/chrome'
+    ];
+    
+    for (const path of possiblePaths) {
+      if (fs.existsSync(path)) {
+        console.log('✅ Chrome encontrado em:', path);
+        process.env.CHROME_BIN = path;
+        return true;
+      }
+    }
+    
+    // Se não encontrou em nenhum local específico, tentar usar o Chrome padrão do sistema
+    console.log('⚠️ Chrome não encontrado em caminhos específicos. Tentando usar Chrome padrão do sistema...');
+    return false;
     
   } catch (error) {
     console.log('❌ Erro ao verificar Chrome:', error.message);
@@ -186,8 +187,8 @@ function buildClient(porta) {
     protocolTimeout: 60000,
   };
 
-  // Adicionar executablePath apenas se o Chrome foi encontrado
-  if (process.env.CHROME_BIN) {
+  // Adicionar executablePath apenas se o Chrome foi encontrado e existe
+  if (process.env.CHROME_BIN && fs.existsSync(process.env.CHROME_BIN)) {
     puppeteerConfig.executablePath = process.env.CHROME_BIN;
     console.log(`🧭 Configurando cliente para porta ${porta} com Chrome: ${puppeteerConfig.executablePath}`);
   } else {
@@ -267,7 +268,7 @@ async function startClient(porta) {
     console.error(`❌ Erro ao inicializar (porta ${porta}):`, err.message);
     
     // Verificar se é um erro relacionado ao Chrome
-    if (err.message.includes('Browser was not found') || err.message.includes('executablePath')) {
+    if (err.message.includes('Browser was not found') || err.message.includes('executablePath') || err.message.includes('Could not find Chrome')) {
       console.log(`⚠️ Erro de Chrome detectado para porta ${porta}. Tentando sem executablePath...`);
       
       // Tentar recriar o cliente sem executablePath
@@ -300,6 +301,7 @@ async function startClient(porta) {
             headless: true,
             timeout: 60000,
             protocolTimeout: 60000,
+            // Não definir executablePath para usar o Chrome padrão do sistema
           },
           authStrategy: new LocalAuth({
             clientId: CANAIS_CONFIG[porta].sessionId,

@@ -179,7 +179,6 @@ function buildClient(porta) {
     ],
     headless: true,
     executablePath: process.env.CHROME_BIN || '/opt/render/.cache/puppeteer/chrome/linux-127.0.6533.88/chrome-linux64/chrome',
-    userDataDir: process.env.PUPPETEER_CACHE_DIR || '/opt/render/.cache/puppeteer',
     timeout: 60000,
     protocolTimeout: 60000,
   };
@@ -188,7 +187,7 @@ function buildClient(porta) {
 
   const client = new Client({
     puppeteer: puppeteerConfig,
-    // Persistência de sessão
+    // Persistência de sessão - REMOVIDO userDataDir para compatibilidade com LocalAuth
     authStrategy: new LocalAuth({
       clientId: cfg.sessionId,            // cada canal tem um clientId distinto
       dataPath: SESSIONS_DIR,             // todas sessões em ./sessions

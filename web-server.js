@@ -22,9 +22,6 @@ const path = require('path');
 const fs = require('fs-extra');
 const QRCode = require('qrcode');
 
-// ---------- Carregar configuração do Puppeteer para Render ----------
-const { createPuppeteerInstance, checkChromeAvailability } = require('./web-server-config');
-
 // ---------- Carregar whatsapp-web.js mesmo se estivermos dentro do fork ----------
 let Client, LocalAuth, MessageMedia;
 try {
@@ -74,6 +71,57 @@ const connectionStatus = new Map();  // porta -> boolean
 const lastState = new Map();         // porta -> state string
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Verifica se o Chrome está disponível no ambiente Render
+ */
+async function checkChromeAvailability() {
+  try {
+    // Caminho baseado nos logs do Render
+    const chromePath = process.env.CHROME_BIN || '/opt/render/.cache/puppeteer/chrome/linux-127.0.6533.88/chrome-linux64/chrome';
+    const cacheDir = process.env.PUPPETEER_CACHE_DIR || '/opt/render/.cache/puppeteer';
+    
+    console.log('🔍 Verificando disponibilidade do Chrome...');
+    console.log('📍 Chrome path:', chromePath);
+    console.log('📁 Cache dir:', cacheDir);
+    
+    // Verificar se o diretório de cache existe
+    if (!fs.existsSync(cacheDir)) {
+      console.log('⚠️ Diretório de cache não encontrado:', cacheDir);
+      return false;
+    }
+    
+    // Verificar se o Chrome existe
+    if (!fs.existsSync(chromePath)) {
+      console.log('⚠️ Chrome não encontrado em:', chromePath);
+      
+      // Tentar encontrar o Chrome em outros locais possíveis
+      const possiblePaths = [
+        '/opt/render/.cache/puppeteer/chrome-linux/chrome',
+        '/opt/render/.cache/puppeteer/chrome/linux-127.0.6533.88/chrome-linux64/chrome',
+        '/usr/bin/google-chrome-stable',
+        '/usr/bin/chromium-browser'
+      ];
+      
+      for (const path of possiblePaths) {
+        if (fs.existsSync(path)) {
+          console.log('✅ Chrome encontrado em:', path);
+          process.env.CHROME_BIN = path;
+          return true;
+        }
+      }
+      
+      return false;
+    }
+    
+    console.log('✅ Chrome encontrado e disponível');
+    return true;
+    
+  } catch (error) {
+    console.log('❌ Erro ao verificar Chrome:', error.message);
+    return false;
+  }
+}
 
 /**
  * Verifica e configura o Puppeteer para o ambiente Render
@@ -130,7 +178,7 @@ function buildClient(porta) {
       '--mute-audio'
     ],
     headless: true,
-    executablePath: process.env.CHROME_BIN || '/opt/render/.cache/puppeteer/chrome-linux/chrome',
+    executablePath: process.env.CHROME_BIN || '/opt/render/.cache/puppeteer/chrome/linux-127.0.6533.88/chrome-linux64/chrome',
     userDataDir: process.env.PUPPETEER_CACHE_DIR || '/opt/render/.cache/puppeteer',
     timeout: 60000,
     protocolTimeout: 60000,
@@ -389,4 +437,4 @@ server.listen(PORT, '0.0.0.0', async () => {
       console.error(`Falha ao iniciar canal ${porta}:`, err.message)
     );
   }
-});
+}); 

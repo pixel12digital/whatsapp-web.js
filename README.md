@@ -134,6 +134,69 @@ For further details on saving and restoring sessions, explore the provided [Auth
 
 Something missing? Make an issue and let us know!
 
+## Deployment
+
+### Render.com Deployment
+
+To deploy this project on Render.com, follow these steps:
+
+#### 1. Environment Variables
+Set the following environment variables in your Render service:
+
+```bash
+NODE_ENV=production
+PORT=8080
+PUPPETEER_CACHE_DIR=/opt/render/.cache/puppeteer
+```
+
+Optionally, you can set:
+```bash
+PUPPETEER_EXECUTABLE_PATH=<path-to-chrome-after-build>
+```
+
+#### 2. Build Command
+Use this build command to install Chrome during deployment:
+
+```bash
+npm ci && npx puppeteer browsers install chrome --platform=linux --cache-dir=/opt/render/.cache/puppeteer
+```
+
+#### 3. Start Command
+```bash
+npm start
+```
+
+#### 4. Service Configuration
+- **Plan**: Choose a plan with at least 1GB RAM
+- **Disk**: Enable persistent disk for session storage
+- **Health Check Path**: `/health`
+
+#### 5. Expected Logs
+When successfully deployed, you should see:
+
+```
+🎯 Chrome encontrado em: /opt/render/.cache/puppeteer/chrome/linux-xxx/chrome-linux64/chrome (puppeteer.executablePath())
+✅ Puppeteer configurado com sucesso
+🚀 Servidor rodando na porta 8080
+🔌 Iniciando canal 3000 (Atendimento IA)...
+🔌 Iniciando canal 3001 (Atendimento Humano)...
+✅ Canal 3000 conectado e pronto
+✅ Canal 3001 conectado e pronto
+```
+
+#### 6. Troubleshooting
+
+**Chrome not found errors:**
+- Ensure `PUPPETEER_CACHE_DIR` is set correctly
+- Verify the build command includes Chrome installation
+- Check that the service has sufficient memory (1GB+)
+
+**Session persistence issues:**
+- Enable persistent disk in Render settings
+- Ensure the `/sessions` directory is writable
+
+For more deployment options and troubleshooting, see the [deployment guide](https://wwebjs.dev/guide/deployment/).
+
 ## Contributing
 
 Feel free to open pull requests; we welcome contributions! However, for significant changes, it's best to open an issue beforehand. Make sure to review our [contribution guidelines][contributing] before creating a pull request. Before creating your own issue or pull request, always check to see if one already exists!

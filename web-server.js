@@ -15,8 +15,7 @@
  * - Configuração otimizada para Render.com com Puppeteer.
  */
 
-// Forçar uso do Chrome do sistema
-process.env.PUPPETEER_SKIP_CHROMIUM_DOWNLOAD = 'true';
+// Configuração para Render.com - usar Puppeteer gerenciado
 
 const http = require('http');
 const express = require('express');
@@ -24,6 +23,7 @@ const cors = require('cors');
 const path = require('path');
 const fs = require('fs-extra');
 const QRCode = require('qrcode');
+const puppeteer = require('puppeteer');
 
 // ---------- Carregar whatsapp-web.js mesmo se estivermos dentro do fork ----------
 let Client, LocalAuth, MessageMedia;
@@ -76,82 +76,47 @@ const lastState = new Map();         // porta -> state string
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /**
- * Verifica se o Chrome está disponível no ambiente Render
+ * Obtém o caminho do Chrome para uso com Puppeteer
+ * Prioriza PUPPETEER_EXECUTABLE_PATH, senão usa puppeteer.executablePath()
  */
-async function checkChromeAvailability() {
+function getChromePath() {
   try {
-    // Caminho CORRETO baseado nos logs do Render
-    const chromePath = process.env.CHROME_BIN || '/opt/render/.cache/puppeteer/chrome/linux-127.0.6533.88/chrome-linux64/chrome';
-    const cacheDir = process.env.PUPPETEER_CACHE_DIR || '/opt/render/.cache/puppeteer';
-    
-    console.log('🔍 Verificando disponibilidade do Chrome...');
-    console.log('📍 Chrome path:', chromePath);
-    console.log('📁 Cache dir:', cacheDir);
-    
-    // Verificar se o diretório de cache existe
-    if (!fs.existsSync(cacheDir)) {
-      console.log('⚠️ Diretório de cache não encontrado:', cacheDir);
+    // Usar variável de ambiente se definida
+    if (process.env.PUPPETEER_EXECUTABLE_PATH) {
+      console.log(`🎯 Chrome encontrado em: ${process.env.PUPPETEER_EXECUTABLE_PATH} (PUPPETEER_EXECUTABLE_PATH)`);
+      return process.env.PUPPETEER_EXECUTABLE_PATH;
     }
     
-    // Verificar se o Chrome existe no caminho principal
-    if (fs.existsSync(chromePath)) {
-      console.log('✅ Chrome encontrado em:', chromePath);
-      process.env.CHROME_BIN = chromePath;
-      return true;
-    }
-    
-    console.log('⚠️ Chrome não encontrado em:', chromePath);
-    
-    // Tentar encontrar o Chrome em outros locais possíveis
-    const possiblePaths = [
-      '/opt/render/.cache/puppeteer/chrome/linux-127.0.6533.88/chrome-linux64/chrome',
-      '/usr/bin/google-chrome-stable',
-      '/usr/bin/chromium-browser',
-      '/usr/bin/chromium',
-      '/usr/bin/google-chrome',
-      '/snap/bin/chromium',
-      '/opt/google/chrome/chrome'
-    ];
-    
-    for (const path of possiblePaths) {
-      if (fs.existsSync(path)) {
-        console.log('✅ Chrome encontrado em:', path);
-        process.env.CHROME_BIN = path;
-        return true;
-      }
-    }
-    
-    // Se não encontrou em nenhum local específico, tentar usar o Chrome padrão do sistema
-    console.log('⚠️ Chrome não encontrado em caminhos específicos. Tentando usar Chrome padrão do sistema...');
-    return false;
-    
+    // Usar Chrome baixado pelo Puppeteer
+    const executablePath = puppeteer.executablePath();
+    console.log(`🎯 Chrome encontrado em: ${executablePath} (puppeteer.executablePath())`);
+    return executablePath;
   } catch (error) {
-    console.log('❌ Erro ao verificar Chrome:', error.message);
-    return false;
+    console.log(`⚠️ Erro ao obter caminho do Chrome: ${error.message}`);
+    return null;
   }
 }
 
 /**
- * Verifica e configura o Puppeteer para o ambiente Render
+ * Configura o Puppeteer para o ambiente de deploy
  */
 async function setupPuppeteer() {
-  console.log('🔧 Configurando Puppeteer para Render.com...');
+  console.log('🔧 Configurando Puppeteer...');
   
   try {
-    // Verificar se o Chrome está disponível
-    const isAvailable = await checkChromeAvailability();
+    const chromePath = getChromePath();
     
-    if (!isAvailable) {
-      console.warn('⚠️ Chrome não encontrado. Tentando usar configuração padrão...');
-      return null;
+    if (!chromePath) {
+      console.warn('⚠️ Chrome não configurado. Puppeteer pode falhar na inicialização.');
+      return false;
     }
     
-    console.log('✅ Chrome encontrado e configurado para Render.com');
+    console.log('✅ Puppeteer configurado com sucesso');
     return true;
     
   } catch (error) {
     console.error('❌ Erro ao configurar Puppeteer:', error.message);
-    return null;
+    return false;
   }
 }
 
@@ -160,42 +125,20 @@ function buildClient(porta) {
   const cfg = CANAIS_CONFIG[porta];
   if (!cfg) throw new Error(`Porta ${porta} não mapeada em CANAIS_CONFIG.`);
 
-  // Forçar uso do Chrome do sistema
-  process.env.PUPPETEER_SKIP_CHROMIUM_DOWNLOAD = 'true';
-  process.env.PUPPETEER_EXECUTABLE_PATH = undefined;
-  process.env.CHROME_BIN = undefined;
-
-  // Configuração do Puppeteer otimizada para Render - SEM executablePath
+  // Configuração do Puppeteer com fallback inteligente
+  const chromePath = getChromePath();
   const puppeteerConfig = {
-    // Argumentos do Chrome para ambiente Render
+    executablePath: chromePath,
     args: [
       '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-dev-shm-usage',
-      '--disable-accelerated-2d-canvas',
-      '--no-first-run',
-      '--no-zygote',
-      '--single-process',
-      '--disable-gpu',
-      '--disable-background-timer-throttling',
-      '--disable-backgrounding-occluded-windows',
-      '--disable-renderer-backgrounding',
-      '--disable-features=TranslateUI',
-      '--disable-ipc-flooding-protection',
-      '--disable-extensions',
-      '--disable-plugins',
-      '--disable-background-networking',
-      '--disable-sync',
-      '--disable-translate',
-      '--hide-scrollbars',
-      '--mute-audio'
+      '--disable-setuid-sandbox'
     ],
     headless: true,
     timeout: 60000,
     protocolTimeout: 60000,
   };
 
-  console.log(`🧭 Configurando cliente para porta ${porta} com Chrome do sistema (forçado)`);
+  console.log(`🧭 Configurando cliente para porta ${porta} com Chrome: ${chromePath || 'padrão do sistema'}`);
 
   const client = new Client({
     puppeteer: puppeteerConfig,
@@ -209,7 +152,7 @@ function buildClient(porta) {
   // ---------- Eventos ----------
   client.on('qr', (qr) => {
     qrCodes.set(porta, qr);
-    console.log(`📱 QR recebido (porta ${porta})`);
+    console.log(`📱 QR pronto (canal ${porta})`);
   });
 
   client.on('authenticated', () => {
@@ -219,7 +162,7 @@ function buildClient(porta) {
   client.on('ready', async () => {
     connectionStatus.set(porta, true);
     qrCodes.set(porta, null);
-    console.log(`✅ Pronto/Conectado (porta ${porta})`);
+    console.log(`✅ Canal ${porta} conectado e pronto`);
   });
 
   client.on('disconnected', async (reason) => {
@@ -268,181 +211,6 @@ async function startClient(porta) {
     await client.initialize();
   } catch (err) {
     console.error(`❌ Erro ao inicializar (porta ${porta}):`, err.message);
-    
-    // Verificar se é um erro relacionado ao Chrome
-    if (err.message.includes('Browser was not found') || err.message.includes('executablePath') || err.message.includes('Could not find Chrome')) {
-      console.log(`⚠️ Erro de Chrome detectado para porta ${porta}. Tentando sem executablePath...`);
-      
-      // Tentar recriar o cliente sem executablePath e com configuração mais flexível
-      try {
-        clients.delete(porta);
-        
-        const fallbackClient = new Client({
-          puppeteer: {
-            args: [
-              '--no-sandbox',
-              '--disable-setuid-sandbox',
-              '--disable-dev-shm-usage',
-              '--disable-accelerated-2d-canvas',
-              '--no-first-run',
-              '--no-zygote',
-              '--single-process',
-              '--disable-gpu',
-              '--disable-background-timer-throttling',
-              '--disable-backgrounding-occluded-windows',
-              '--disable-renderer-backgrounding',
-              '--disable-features=TranslateUI',
-              '--disable-ipc-flooding-protection',
-              '--disable-extensions',
-              '--disable-plugins',
-              '--disable-background-networking',
-              '--disable-sync',
-              '--disable-translate',
-              '--hide-scrollbars',
-              '--mute-audio'
-            ],
-            headless: true,
-            timeout: 60000,
-            protocolTimeout: 60000,
-          },
-          authStrategy: new LocalAuth({
-            clientId: CANAIS_CONFIG[porta].sessionId,
-            dataPath: SESSIONS_DIR,
-          }),
-        });
-        
-        clients.set(porta, fallbackClient);
-        connectionStatus.set(porta, false);
-        qrCodes.set(porta, null);
-        
-        // Configurar eventos para o cliente fallback
-        fallbackClient.on('qr', (qr) => {
-          qrCodes.set(porta, qr);
-          console.log(`📱 QR recebido (porta ${porta})`);
-        });
-        
-        fallbackClient.on('authenticated', () => {
-          console.log(`✅ Autenticado (porta ${porta})`);
-        });
-        
-        fallbackClient.on('ready', async () => {
-          connectionStatus.set(porta, true);
-          qrCodes.set(porta, null);
-          console.log(`✅ Pronto/Conectado (porta ${porta})`);
-        });
-        
-        fallbackClient.on('disconnected', async (reason) => {
-          console.log(`❌ Desconectado (porta ${porta}) → ${reason}`);
-          connectionStatus.set(porta, false);
-          qrCodes.set(porta, null);
-          try { await fallbackClient.destroy(); } catch (_) {}
-          clients.delete(porta);
-          setTimeout(() => {
-            console.log(`🔄 Recriando cliente (porta ${porta})...`);
-            startClient(porta).catch(err => console.error(`Erro recriando ${porta}:`, err.message));
-          }, 5000);
-        });
-        
-        fallbackClient.on('change_state', (state) => {
-          lastState.set(porta, state);
-          console.log(`ℹ️ State (porta ${porta}) = ${state}`);
-        });
-        
-        fallbackClient.on('auth_failure', (msg) => {
-          console.log(`⚠️ Falha de autenticação (porta ${porta}) → ${msg}`);
-          connectionStatus.set(porta, false);
-        });
-        
-        await fallbackClient.initialize();
-        return fallbackClient;
-        
-      } catch (fallbackErr) {
-        console.error(`❌ Erro também no fallback (porta ${porta}):`, fallbackErr.message);
-        
-        // Se ainda falhar, tentar uma última vez com configuração mínima
-        try {
-          console.log(`🔄 Tentativa final para porta ${porta} com configuração mínima...`);
-          clients.delete(porta);
-          
-          const minimalClient = new Client({
-            puppeteer: {
-              args: [
-                '--no-sandbox',
-                '--disable-setuid-sandbox',
-                '--disable-dev-shm-usage',
-                '--disable-gpu',
-                '--no-first-run',
-                '--disable-extensions',
-                '--disable-plugins',
-                '--disable-background-networking',
-                '--disable-sync',
-                '--hide-scrollbars',
-                '--mute-audio'
-              ],
-              headless: true,
-              timeout: 120000,
-              protocolTimeout: 120000,
-            },
-            authStrategy: new LocalAuth({
-              clientId: CANAIS_CONFIG[porta].sessionId,
-              dataPath: SESSIONS_DIR,
-            }),
-          });
-          
-          clients.set(porta, minimalClient);
-          connectionStatus.set(porta, false);
-          qrCodes.set(porta, null);
-          
-          // Configurar eventos para o cliente mínimo
-          minimalClient.on('qr', (qr) => {
-            qrCodes.set(porta, qr);
-            console.log(`📱 QR recebido (porta ${porta})`);
-          });
-          
-          minimalClient.on('authenticated', () => {
-            console.log(`✅ Autenticado (porta ${porta})`);
-          });
-          
-          minimalClient.on('ready', async () => {
-            connectionStatus.set(porta, true);
-            qrCodes.set(porta, null);
-            console.log(`✅ Pronto/Conectado (porta ${porta})`);
-          });
-          
-          minimalClient.on('disconnected', async (reason) => {
-            console.log(`❌ Desconectado (porta ${porta}) → ${reason}`);
-            connectionStatus.set(porta, false);
-            qrCodes.set(porta, null);
-            try { await minimalClient.destroy(); } catch (_) {}
-            clients.delete(porta);
-            setTimeout(() => {
-              console.log(`🔄 Recriando cliente (porta ${porta})...`);
-              startClient(porta).catch(err => console.error(`Erro recriando ${porta}:`, err.message));
-            }, 5000);
-          });
-          
-          minimalClient.on('change_state', (state) => {
-            lastState.set(porta, state);
-            console.log(`ℹ️ State (porta ${porta}) = ${state}`);
-          });
-          
-          minimalClient.on('auth_failure', (msg) => {
-            console.log(`⚠️ Falha de autenticação (porta ${porta}) → ${msg}`);
-            connectionStatus.set(porta, false);
-          });
-          
-          await minimalClient.initialize();
-          return minimalClient;
-          
-        } catch (minimalErr) {
-          console.error(`❌ Erro também na tentativa mínima (porta ${porta}):`, minimalErr.message);
-          connectionStatus.set(porta, false);
-          clients.delete(porta);
-          throw minimalErr;
-        }
-      }
-    }
-    
     connectionStatus.set(porta, false);
     clients.delete(porta);
     throw err;
@@ -619,6 +387,7 @@ server.listen(PORT, '0.0.0.0', async () => {
 
   // Sobe os 2 canais automaticamente
   for (const porta of Object.keys(CANAIS_CONFIG).map(Number)) {
+    console.log(`🔌 Iniciando canal ${porta} (${CANAIS_CONFIG[porta].nome})...`);
     startClient(porta).catch((err) =>
       console.error(`Falha ao iniciar canal ${porta}:`, err.message)
     );

@@ -77,7 +77,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
  */
 async function checkChromeAvailability() {
   try {
-    // Caminho baseado nos logs do Render
+    // Caminho CORRETO baseado nos logs do Render
     const chromePath = process.env.CHROME_BIN || '/opt/render/.cache/puppeteer/chrome/linux-127.0.6533.88/chrome-linux64/chrome';
     const cacheDir = process.env.PUPPETEER_CACHE_DIR || '/opt/render/.cache/puppeteer';
     
@@ -97,8 +97,8 @@ async function checkChromeAvailability() {
       
       // Tentar encontrar o Chrome em outros locais possíveis
       const possiblePaths = [
-        '/opt/render/.cache/puppeteer/chrome-linux/chrome',
         '/opt/render/.cache/puppeteer/chrome/linux-127.0.6533.88/chrome-linux64/chrome',
+        '/opt/render/.cache/puppeteer/chrome-linux/chrome',
         '/usr/bin/google-chrome-stable',
         '/usr/bin/chromium-browser'
       ];
@@ -201,7 +201,7 @@ function buildClient(porta) {
   });
 
   client.on('authenticated', () => {
-    console.log(`🔐 Autenticado (porta ${porta})`);
+    console.log(`�� Autenticado (porta ${porta})`);
   });
 
   client.on('ready', async () => {

@@ -81,7 +81,7 @@ async function checkChromeAvailability() {
     const chromePath = process.env.CHROME_BIN || '/opt/render/.cache/puppeteer/chrome/linux-127.0.6533.88/chrome-linux64/chrome';
     const cacheDir = process.env.PUPPETEER_CACHE_DIR || '/opt/render/.cache/puppeteer';
     
-    console.log('🔍 Verificando disponibilidade do Chrome...');
+    console.log('�� Verificando disponibilidade do Chrome...');
     console.log('📍 Chrome path:', chromePath);
     console.log('�� Cache dir:', cacheDir);
     
@@ -98,7 +98,6 @@ async function checkChromeAvailability() {
       // Tentar encontrar o Chrome em outros locais possíveis
       const possiblePaths = [
         '/opt/render/.cache/puppeteer/chrome/linux-127.0.6533.88/chrome-linux64/chrome',
-        '/opt/render/.cache/puppeteer/chrome-linux/chrome',
         '/usr/bin/google-chrome-stable',
         '/usr/bin/chromium-browser'
       ];

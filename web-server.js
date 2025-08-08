@@ -81,14 +81,13 @@ async function checkChromeAvailability() {
     const chromePath = process.env.CHROME_BIN || '/opt/render/.cache/puppeteer/chrome/linux-127.0.6533.88/chrome-linux64/chrome';
     const cacheDir = process.env.PUPPETEER_CACHE_DIR || '/opt/render/.cache/puppeteer';
     
-    console.log('�� Verificando disponibilidade do Chrome...');
+    console.log('🔍 Verificando disponibilidade do Chrome...');
     console.log('📍 Chrome path:', chromePath);
-    console.log('�� Cache dir:', cacheDir);
+    console.log('📁 Cache dir:', cacheDir);
     
     // Verificar se o diretório de cache existe
     if (!fs.existsSync(cacheDir)) {
       console.log('⚠️ Diretório de cache não encontrado:', cacheDir);
-      return false;
     }
     
     // Verificar se o Chrome existe
@@ -99,7 +98,11 @@ async function checkChromeAvailability() {
       const possiblePaths = [
         '/opt/render/.cache/puppeteer/chrome/linux-127.0.6533.88/chrome-linux64/chrome',
         '/usr/bin/google-chrome-stable',
-        '/usr/bin/chromium-browser'
+        '/usr/bin/chromium-browser',
+        '/usr/bin/chromium',
+        '/usr/bin/google-chrome',
+        '/snap/bin/chromium',
+        '/opt/google/chrome/chrome'
       ];
       
       for (const path of possiblePaths) {
@@ -110,6 +113,8 @@ async function checkChromeAvailability() {
         }
       }
       
+      // Se não encontrou em nenhum local específico, tentar usar o Chrome padrão do sistema
+      console.log('⚠️ Chrome não encontrado em caminhos específicos. Tentando usar Chrome padrão do sistema...');
       return false;
     }
     
@@ -177,12 +182,17 @@ function buildClient(porta) {
       '--mute-audio'
     ],
     headless: true,
-    executablePath: process.env.CHROME_BIN || '/opt/render/.cache/puppeteer/chrome/linux-127.0.6533.88/chrome-linux64/chrome',
     timeout: 60000,
     protocolTimeout: 60000,
   };
 
-  console.log(`🧭 Configurando cliente para porta ${porta} com Chrome: ${puppeteerConfig.executablePath}`);
+  // Adicionar executablePath apenas se o Chrome foi encontrado
+  if (process.env.CHROME_BIN) {
+    puppeteerConfig.executablePath = process.env.CHROME_BIN;
+    console.log(`🧭 Configurando cliente para porta ${porta} com Chrome: ${puppeteerConfig.executablePath}`);
+  } else {
+    console.log(`🧭 Configurando cliente para porta ${porta} com Chrome padrão do sistema`);
+  }
 
   const client = new Client({
     puppeteer: puppeteerConfig,
@@ -255,6 +265,101 @@ async function startClient(porta) {
     await client.initialize();
   } catch (err) {
     console.error(`❌ Erro ao inicializar (porta ${porta}):`, err.message);
+    
+    // Verificar se é um erro relacionado ao Chrome
+    if (err.message.includes('Browser was not found') || err.message.includes('executablePath')) {
+      console.log(`⚠️ Erro de Chrome detectado para porta ${porta}. Tentando sem executablePath...`);
+      
+      // Tentar recriar o cliente sem executablePath
+      try {
+        clients.delete(porta);
+        const fallbackClient = new Client({
+          puppeteer: {
+            args: [
+              '--no-sandbox',
+              '--disable-setuid-sandbox',
+              '--disable-dev-shm-usage',
+              '--disable-accelerated-2d-canvas',
+              '--no-first-run',
+              '--no-zygote',
+              '--single-process',
+              '--disable-gpu',
+              '--disable-background-timer-throttling',
+              '--disable-backgrounding-occluded-windows',
+              '--disable-renderer-backgrounding',
+              '--disable-features=TranslateUI',
+              '--disable-ipc-flooding-protection',
+              '--disable-extensions',
+              '--disable-plugins',
+              '--disable-background-networking',
+              '--disable-sync',
+              '--disable-translate',
+              '--hide-scrollbars',
+              '--mute-audio'
+            ],
+            headless: true,
+            timeout: 60000,
+            protocolTimeout: 60000,
+          },
+          authStrategy: new LocalAuth({
+            clientId: CANAIS_CONFIG[porta].sessionId,
+            dataPath: SESSIONS_DIR,
+          }),
+        });
+        
+        clients.set(porta, fallbackClient);
+        connectionStatus.set(porta, false);
+        qrCodes.set(porta, null);
+        
+        // Configurar eventos para o cliente fallback
+        fallbackClient.on('qr', (qr) => {
+          qrCodes.set(porta, qr);
+          console.log(`📱 QR recebido (porta ${porta})`);
+        });
+        
+        fallbackClient.on('authenticated', () => {
+          console.log(`✅ Autenticado (porta ${porta})`);
+        });
+        
+        fallbackClient.on('ready', async () => {
+          connectionStatus.set(porta, true);
+          qrCodes.set(porta, null);
+          console.log(`✅ Pronto/Conectado (porta ${porta})`);
+        });
+        
+        fallbackClient.on('disconnected', async (reason) => {
+          console.log(`❌ Desconectado (porta ${porta}) → ${reason}`);
+          connectionStatus.set(porta, false);
+          qrCodes.set(porta, null);
+          try { await fallbackClient.destroy(); } catch (_) {}
+          clients.delete(porta);
+          setTimeout(() => {
+            console.log(`🔄 Recriando cliente (porta ${porta})...`);
+            startClient(porta).catch(err => console.error(`Erro recriando ${porta}:`, err.message));
+          }, 5000);
+        });
+        
+        fallbackClient.on('change_state', (state) => {
+          lastState.set(porta, state);
+          console.log(`ℹ️ State (porta ${porta}) = ${state}`);
+        });
+        
+        fallbackClient.on('auth_failure', (msg) => {
+          console.log(`⚠️ Falha de autenticação (porta ${porta}) → ${msg}`);
+          connectionStatus.set(porta, false);
+        });
+        
+        await fallbackClient.initialize();
+        return fallbackClient;
+        
+      } catch (fallbackErr) {
+        console.error(`❌ Erro também no fallback (porta ${porta}):`, fallbackErr.message);
+        connectionStatus.set(porta, false);
+        clients.delete(porta);
+        throw fallbackErr;
+      }
+    }
+    
     connectionStatus.set(porta, false);
     clients.delete(porta);
     throw err;

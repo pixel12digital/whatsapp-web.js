@@ -9,6 +9,9 @@
     "test-single": "mocha",
     "shell": "node --experimental-repl-await ./shell.js",
     "generate-docs": "npx jsdoc --configure .jsdoc.json --verbose",
+
+    "postinstall": "npx puppeteer browsers install chrome --cache-dir=/opt/render/.cache/puppeteer",
+
     "start": "node web-server.js"
   },
   "repository": {

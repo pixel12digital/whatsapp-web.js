@@ -157,7 +157,7 @@ function buildClient(porta) {
   const cfg = CANAIS_CONFIG[porta];
   if (!cfg) throw new Error(`Porta ${porta} não mapeada em CANAIS_CONFIG.`);
 
-  // Configuração do Puppeteer otimizada para Render
+  // Configuração do Puppeteer otimizada para Render - SEM executablePath
   const puppeteerConfig = {
     // Argumentos do Chrome para ambiente Render
     args: [
@@ -185,16 +185,10 @@ function buildClient(porta) {
     headless: true,
     timeout: 60000,
     protocolTimeout: 60000,
+    // NÃO definir executablePath - deixar Puppeteer usar Chrome do sistema
   };
 
-  // Adicionar executablePath apenas se o Chrome foi encontrado e existe
-  if (process.env.CHROME_BIN && fs.existsSync(process.env.CHROME_BIN)) {
-    puppeteerConfig.executablePath = process.env.CHROME_BIN;
-    console.log(`🧭 Configurando cliente para porta ${porta} com Chrome: ${puppeteerConfig.executablePath}`);
-  } else {
-    console.log(`🧭 Configurando cliente para porta ${porta} com Chrome padrão do sistema`);
-    // Não definir executablePath para usar o Chrome padrão do sistema
-  }
+  console.log(`🧭 Configurando cliente para porta ${porta} com Chrome do sistema`);
 
   const client = new Client({
     puppeteer: puppeteerConfig,
@@ -302,8 +296,7 @@ async function startClient(porta) {
             headless: true,
             timeout: 60000,
             protocolTimeout: 60000,
-            // Não definir executablePath para usar o Chrome padrão do sistema
-            // Também não definir cacheDirectory para usar o padrão
+            // NÃO definir executablePath - usar Chrome do sistema
           },
           authStrategy: new LocalAuth({
             clientId: CANAIS_CONFIG[porta].sessionId,
@@ -382,6 +375,7 @@ async function startClient(porta) {
               headless: true,
               timeout: 120000,
               protocolTimeout: 120000,
+              // NÃO definir executablePath - usar Chrome do sistema
             },
             authStrategy: new LocalAuth({
               clientId: CANAIS_CONFIG[porta].sessionId,

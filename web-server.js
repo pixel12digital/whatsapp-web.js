@@ -17,8 +17,6 @@
 
 // Forçar uso do Chrome do sistema
 process.env.PUPPETEER_SKIP_CHROMIUM_DOWNLOAD = 'true';
-process.env.PUPPETEER_EXECUTABLE_PATH = undefined;
-process.env.CHROME_BIN = undefined;
 
 const http = require('http');
 const express = require('express');
@@ -195,9 +193,6 @@ function buildClient(porta) {
     headless: true,
     timeout: 60000,
     protocolTimeout: 60000,
-    // Forçar uso do Chrome do sistema
-    executablePath: undefined,
-    cacheDirectory: undefined,
   };
 
   console.log(`🧭 Configurando cliente para porta ${porta} com Chrome do sistema (forçado)`);
@@ -282,11 +277,6 @@ async function startClient(porta) {
       try {
         clients.delete(porta);
         
-        // Forçar uso do Chrome do sistema no fallback também
-        process.env.PUPPETEER_SKIP_CHROMIUM_DOWNLOAD = 'true';
-        process.env.PUPPETEER_EXECUTABLE_PATH = undefined;
-        process.env.CHROME_BIN = undefined;
-        
         const fallbackClient = new Client({
           puppeteer: {
             args: [
@@ -314,9 +304,6 @@ async function startClient(porta) {
             headless: true,
             timeout: 60000,
             protocolTimeout: 60000,
-            // Forçar uso do Chrome do sistema
-            executablePath: undefined,
-            cacheDirectory: undefined,
           },
           authStrategy: new LocalAuth({
             clientId: CANAIS_CONFIG[porta].sessionId,
@@ -377,11 +364,6 @@ async function startClient(porta) {
           console.log(`🔄 Tentativa final para porta ${porta} com configuração mínima...`);
           clients.delete(porta);
           
-          // Forçar uso do Chrome do sistema na configuração mínima também
-          process.env.PUPPETEER_SKIP_CHROMIUM_DOWNLOAD = 'true';
-          process.env.PUPPETEER_EXECUTABLE_PATH = undefined;
-          process.env.CHROME_BIN = undefined;
-          
           const minimalClient = new Client({
             puppeteer: {
               args: [
@@ -400,9 +382,6 @@ async function startClient(porta) {
               headless: true,
               timeout: 120000,
               protocolTimeout: 120000,
-              // Forçar uso do Chrome do sistema
-              executablePath: undefined,
-              cacheDirectory: undefined,
             },
             authStrategy: new LocalAuth({
               clientId: CANAIS_CONFIG[porta].sessionId,

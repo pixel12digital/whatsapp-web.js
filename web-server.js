@@ -15,8 +15,9 @@
  * - Configuração otimizada para Render.com com Puppeteer.
  */
 
-// Forçar uso do Chrome do sistema
+// Configuração para Render - usar Chrome do sistema
 process.env.PUPPETEER_SKIP_CHROMIUM_DOWNLOAD = 'true';
+process.env.PUPPETEER_EXECUTABLE_PATH = process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/google-chrome-stable';
 
 const http = require('http');
 const express = require('express');
@@ -160,13 +161,9 @@ function buildClient(porta) {
   const cfg = CANAIS_CONFIG[porta];
   if (!cfg) throw new Error(`Porta ${porta} não mapeada em CANAIS_CONFIG.`);
 
-  // Forçar uso do Chrome do sistema
-  process.env.PUPPETEER_SKIP_CHROMIUM_DOWNLOAD = 'true';
-  process.env.PUPPETEER_EXECUTABLE_PATH = undefined;
-  process.env.CHROME_BIN = undefined;
-
-  // Configuração do Puppeteer otimizada para Render - SEM executablePath
+  // Configuração do Puppeteer otimizada para Render - usar Chrome do sistema
   const puppeteerConfig = {
+    executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/google-chrome-stable',
     // Argumentos do Chrome para ambiente Render
     args: [
       '--no-sandbox',
@@ -195,7 +192,7 @@ function buildClient(porta) {
     protocolTimeout: 60000,
   };
 
-  console.log(`🧭 Configurando cliente para porta ${porta} com Chrome do sistema (forçado)`);
+  console.log(`🧭 Configurando cliente para porta ${porta} com Chrome: ${puppeteerConfig.executablePath}`);
 
   const client = new Client({
     puppeteer: puppeteerConfig,
@@ -268,181 +265,6 @@ async function startClient(porta) {
     await client.initialize();
   } catch (err) {
     console.error(`❌ Erro ao inicializar (porta ${porta}):`, err.message);
-    
-    // Verificar se é um erro relacionado ao Chrome
-    if (err.message.includes('Browser was not found') || err.message.includes('executablePath') || err.message.includes('Could not find Chrome')) {
-      console.log(`⚠️ Erro de Chrome detectado para porta ${porta}. Tentando sem executablePath...`);
-      
-      // Tentar recriar o cliente sem executablePath e com configuração mais flexível
-      try {
-        clients.delete(porta);
-        
-        const fallbackClient = new Client({
-          puppeteer: {
-            args: [
-              '--no-sandbox',
-              '--disable-setuid-sandbox',
-              '--disable-dev-shm-usage',
-              '--disable-accelerated-2d-canvas',
-              '--no-first-run',
-              '--no-zygote',
-              '--single-process',
-              '--disable-gpu',
-              '--disable-background-timer-throttling',
-              '--disable-backgrounding-occluded-windows',
-              '--disable-renderer-backgrounding',
-              '--disable-features=TranslateUI',
-              '--disable-ipc-flooding-protection',
-              '--disable-extensions',
-              '--disable-plugins',
-              '--disable-background-networking',
-              '--disable-sync',
-              '--disable-translate',
-              '--hide-scrollbars',
-              '--mute-audio'
-            ],
-            headless: true,
-            timeout: 60000,
-            protocolTimeout: 60000,
-          },
-          authStrategy: new LocalAuth({
-            clientId: CANAIS_CONFIG[porta].sessionId,
-            dataPath: SESSIONS_DIR,
-          }),
-        });
-        
-        clients.set(porta, fallbackClient);
-        connectionStatus.set(porta, false);
-        qrCodes.set(porta, null);
-        
-        // Configurar eventos para o cliente fallback
-        fallbackClient.on('qr', (qr) => {
-          qrCodes.set(porta, qr);
-          console.log(`📱 QR recebido (porta ${porta})`);
-        });
-        
-        fallbackClient.on('authenticated', () => {
-          console.log(`✅ Autenticado (porta ${porta})`);
-        });
-        
-        fallbackClient.on('ready', async () => {
-          connectionStatus.set(porta, true);
-          qrCodes.set(porta, null);
-          console.log(`✅ Pronto/Conectado (porta ${porta})`);
-        });
-        
-        fallbackClient.on('disconnected', async (reason) => {
-          console.log(`❌ Desconectado (porta ${porta}) → ${reason}`);
-          connectionStatus.set(porta, false);
-          qrCodes.set(porta, null);
-          try { await fallbackClient.destroy(); } catch (_) {}
-          clients.delete(porta);
-          setTimeout(() => {
-            console.log(`🔄 Recriando cliente (porta ${porta})...`);
-            startClient(porta).catch(err => console.error(`Erro recriando ${porta}:`, err.message));
-          }, 5000);
-        });
-        
-        fallbackClient.on('change_state', (state) => {
-          lastState.set(porta, state);
-          console.log(`ℹ️ State (porta ${porta}) = ${state}`);
-        });
-        
-        fallbackClient.on('auth_failure', (msg) => {
-          console.log(`⚠️ Falha de autenticação (porta ${porta}) → ${msg}`);
-          connectionStatus.set(porta, false);
-        });
-        
-        await fallbackClient.initialize();
-        return fallbackClient;
-        
-      } catch (fallbackErr) {
-        console.error(`❌ Erro também no fallback (porta ${porta}):`, fallbackErr.message);
-        
-        // Se ainda falhar, tentar uma última vez com configuração mínima
-        try {
-          console.log(`🔄 Tentativa final para porta ${porta} com configuração mínima...`);
-          clients.delete(porta);
-          
-          const minimalClient = new Client({
-            puppeteer: {
-              args: [
-                '--no-sandbox',
-                '--disable-setuid-sandbox',
-                '--disable-dev-shm-usage',
-                '--disable-gpu',
-                '--no-first-run',
-                '--disable-extensions',
-                '--disable-plugins',
-                '--disable-background-networking',
-                '--disable-sync',
-                '--hide-scrollbars',
-                '--mute-audio'
-              ],
-              headless: true,
-              timeout: 120000,
-              protocolTimeout: 120000,
-            },
-            authStrategy: new LocalAuth({
-              clientId: CANAIS_CONFIG[porta].sessionId,
-              dataPath: SESSIONS_DIR,
-            }),
-          });
-          
-          clients.set(porta, minimalClient);
-          connectionStatus.set(porta, false);
-          qrCodes.set(porta, null);
-          
-          // Configurar eventos para o cliente mínimo
-          minimalClient.on('qr', (qr) => {
-            qrCodes.set(porta, qr);
-            console.log(`📱 QR recebido (porta ${porta})`);
-          });
-          
-          minimalClient.on('authenticated', () => {
-            console.log(`✅ Autenticado (porta ${porta})`);
-          });
-          
-          minimalClient.on('ready', async () => {
-            connectionStatus.set(porta, true);
-            qrCodes.set(porta, null);
-            console.log(`✅ Pronto/Conectado (porta ${porta})`);
-          });
-          
-          minimalClient.on('disconnected', async (reason) => {
-            console.log(`❌ Desconectado (porta ${porta}) → ${reason}`);
-            connectionStatus.set(porta, false);
-            qrCodes.set(porta, null);
-            try { await minimalClient.destroy(); } catch (_) {}
-            clients.delete(porta);
-            setTimeout(() => {
-              console.log(`🔄 Recriando cliente (porta ${porta})...`);
-              startClient(porta).catch(err => console.error(`Erro recriando ${porta}:`, err.message));
-            }, 5000);
-          });
-          
-          minimalClient.on('change_state', (state) => {
-            lastState.set(porta, state);
-            console.log(`ℹ️ State (porta ${porta}) = ${state}`);
-          });
-          
-          minimalClient.on('auth_failure', (msg) => {
-            console.log(`⚠️ Falha de autenticação (porta ${porta}) → ${msg}`);
-            connectionStatus.set(porta, false);
-          });
-          
-          await minimalClient.initialize();
-          return minimalClient;
-          
-        } catch (minimalErr) {
-          console.error(`❌ Erro também na tentativa mínima (porta ${porta}):`, minimalErr.message);
-          connectionStatus.set(porta, false);
-          clients.delete(porta);
-          throw minimalErr;
-        }
-      }
-    }
-    
     connectionStatus.set(porta, false);
     clients.delete(porta);
     throw err;

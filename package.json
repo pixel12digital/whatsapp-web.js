@@ -10,7 +10,7 @@
     "shell": "node --experimental-repl-await ./shell.js",
     "generate-docs": "npx jsdoc --configure .jsdoc.json --verbose",
 
-    "postinstall": "echo 'Using system Chrome - no specific installation needed'",
+    "postinstall": "echo 'Chrome configuration: Will use system Chrome if available, otherwise Puppeteer will download its own Chrome'",
 
     "start": "node web-server.js"
   },

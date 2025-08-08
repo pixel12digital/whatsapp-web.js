@@ -13,12 +13,13 @@
  * - Persistência das sessões em ./sessions (necessário Disk no Render).
  * - Compatível com execução dentro do repositório do whatsapp-web.js (usa require('./')).
  * - Configuração otimizada para Render.com com Puppeteer.
+ * - Chrome detection: Tenta encontrar Chrome no sistema, se não encontrar usa Chrome do Puppeteer.
+ * - Fallback: Se Chrome não for encontrado, usa configuração mínima sem executablePath.
  */
 
-// Forçar uso do Chrome do sistema
-process.env.PUPPETEER_SKIP_CHROMIUM_DOWNLOAD = 'true';
+// Configuração do Puppeteer para Render.com
+process.env.PUPPETEER_SKIP_CHROMIUM_DOWNLOAD = 'false'; // Permitir download do Chromium se necessário
 process.env.PUPPETEER_CACHE_DIR = '/tmp/puppeteer-cache';
-process.env.CHROME_BIN = '/usr/bin/google-chrome-stable';
 
 const http = require('http');
 const express = require('express');
@@ -93,18 +94,19 @@ async function checkChromeAvailability() {
       '/snap/bin/chromium',
       '/opt/google/chrome/chrome',
       '/usr/bin/chrome',
-      '/usr/bin/chrome-browser'
+      '/usr/bin/chrome-browser',
+      '/opt/render/.cache/puppeteer/chrome/linux-127.0.6533.88/chrome-linux64/chrome'
     ];
     
-    for (const path of possiblePaths) {
-      if (fs.existsSync(path)) {
-        console.log('✅ Chrome encontrado em:', path);
-        process.env.CHROME_BIN = path;
-        return path;
+    for (const chromePath of possiblePaths) {
+      if (fs.existsSync(chromePath)) {
+        console.log('✅ Chrome encontrado em:', chromePath);
+        process.env.CHROME_BIN = chromePath;
+        return chromePath;
       }
     }
     
-    console.log('⚠️ Chrome não encontrado em caminhos específicos. Tentando usar Chrome padrão do sistema...');
+    console.log('⚠️ Chrome não encontrado em caminhos específicos. Usando Chrome do Puppeteer...');
     return null;
     
   } catch (error) {
@@ -127,7 +129,7 @@ async function setupPuppeteer() {
       console.log('✅ Chrome encontrado e configurado para Render.com:', chromePath);
       return chromePath;
     } else {
-      console.warn('⚠️ Chrome não encontrado. Tentando usar configuração padrão...');
+      console.log('ℹ️ Usando Chrome do Puppeteer (download automático se necessário)...');
       return null;
     }
     
@@ -141,13 +143,6 @@ async function setupPuppeteer() {
 function buildClient(porta) {
   const cfg = CANAIS_CONFIG[porta];
   if (!cfg) throw new Error(`Porta ${porta} não mapeada em CANAIS_CONFIG.`);
-
-  // Forçar uso do Chrome do sistema
-  process.env.PUPPETEER_SKIP_CHROMIUM_DOWNLOAD = 'true';
-  process.env.PUPPETEER_CACHE_DIR = '/tmp/puppeteer-cache';
-  
-  // Usar o Chrome encontrado ou o padrão
-  const chromePath = process.env.CHROME_BIN || '/usr/bin/google-chrome-stable';
 
   // Configuração do Puppeteer otimizada para Render
   const puppeteerConfig = {
@@ -177,11 +172,16 @@ function buildClient(porta) {
     headless: true,
     timeout: 60000,
     protocolTimeout: 60000,
-    // Forçar uso do Chrome do sistema
-    executablePath: chromePath,
   };
 
-  console.log(`🧭 Configurando cliente para porta ${porta} com Chrome: ${chromePath}`);
+  // Adicionar executablePath apenas se o Chrome for encontrado
+  const chromePath = process.env.CHROME_BIN;
+  if (chromePath && fs.existsSync(chromePath)) {
+    puppeteerConfig.executablePath = chromePath;
+    console.log(`🧭 Configurando cliente para porta ${porta} com Chrome: ${chromePath}`);
+  } else {
+    console.log(`🧭 Configurando cliente para porta ${porta} com Chrome do Puppeteer`);
+  }
 
   const client = new Client({
     puppeteer: puppeteerConfig,
@@ -199,7 +199,7 @@ function buildClient(porta) {
   });
 
   client.on('authenticated', () => {
-    console.log(`�� Autenticado (porta ${porta})`);
+    console.log(`✅ Autenticado (porta ${porta})`);
   });
 
   client.on('ready', async () => {
@@ -212,11 +212,8 @@ function buildClient(porta) {
     console.log(`❌ Desconectado (porta ${porta}) → ${reason}`);
     connectionStatus.set(porta, false);
     qrCodes.set(porta, null);
-
     try { await client.destroy(); } catch (_) {}
     clients.delete(porta);
-
-    // Tenta recomeçar sozinho após breve espera
     setTimeout(() => {
       console.log(`🔄 Recriando cliente (porta ${porta})...`);
       startClient(porta).catch(err => console.error(`Erro recriando ${porta}:`, err.message));
@@ -225,11 +222,11 @@ function buildClient(porta) {
 
   client.on('change_state', (state) => {
     lastState.set(porta, state);
-    console.log(`ℹ️  State (porta ${porta}) = ${state}`);
+    console.log(`ℹ️ State (porta ${porta}) = ${state}`);
   });
 
   client.on('auth_failure', (msg) => {
-    console.log(`⚠️  Falha de autenticação (porta ${porta}) → ${msg}`);
+    console.log(`⚠️ Falha de autenticação (porta ${porta}) → ${msg}`);
     connectionStatus.set(porta, false);
   });
 
@@ -259,7 +256,7 @@ async function startClient(porta) {
     if (err.message.includes('Browser was not found') || err.message.includes('executablePath') || err.message.includes('Could not find Chrome')) {
       console.log(`⚠️ Erro de Chrome detectado para porta ${porta}. Tentando sem executablePath...`);
       
-      // Tentar recriar o cliente sem executablePath e com configuração mais flexível
+      // Tentar recriar o cliente sem executablePath
       try {
         clients.delete(porta);
         
@@ -290,8 +287,7 @@ async function startClient(porta) {
             headless: true,
             timeout: 60000,
             protocolTimeout: 60000,
-            // Forçar uso do Chrome do sistema
-            executablePath: process.env.CHROME_BIN || '/usr/bin/google-chrome-stable',
+            // Remover executablePath para usar Chrome do Puppeteer
           },
           authStrategy: new LocalAuth({
             clientId: CANAIS_CONFIG[porta].sessionId,
@@ -370,8 +366,7 @@ async function startClient(porta) {
               headless: true,
               timeout: 120000,
               protocolTimeout: 120000,
-              // Forçar uso do Chrome do sistema
-              executablePath: process.env.CHROME_BIN || '/usr/bin/google-chrome-stable',
+              // Remover executablePath para usar Chrome do Puppeteer
             },
             authStrategy: new LocalAuth({
               clientId: CANAIS_CONFIG[porta].sessionId,

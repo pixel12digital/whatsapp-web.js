@@ -19,7 +19,6 @@
 
 // Configuração do Puppeteer para Render.com
 process.env.PUPPETEER_SKIP_CHROMIUM_DOWNLOAD = 'false'; // Permitir download do Chromium se necessário
-process.env.PUPPETEER_CACHE_DIR = '/tmp/puppeteer-cache';
 
 const http = require('http');
 const express = require('express');
@@ -85,19 +84,9 @@ async function checkChromeAvailability() {
   try {
     console.log('🔍 Verificando disponibilidade do Chrome...');
     
-    // Lista de possíveis caminhos do Chrome no sistema
+    // Lista de possíveis caminhos do Chrome no sistema (priorizando o cache do Render)
     const possiblePaths = [
-      '/usr/bin/google-chrome-stable',
-      '/usr/bin/chromium-browser',
-      '/usr/bin/chromium',
-      '/usr/bin/google-chrome',
-      '/snap/bin/chromium',
-      '/opt/google/chrome/chrome',
-      '/usr/bin/chrome',
-      '/usr/bin/chrome-browser',
       '/opt/render/.cache/puppeteer/chrome/linux-127.0.6533.88/chrome-linux64/chrome',
-      '/opt/render/.cache/puppeteer/chrome/linux-*/chrome-linux64/chrome',
-      '/usr/bin/google-chrome-stable',
       '/usr/bin/chromium-browser',
       '/usr/bin/chromium',
       '/usr/bin/google-chrome',
@@ -107,25 +96,18 @@ async function checkChromeAvailability() {
       '/usr/bin/chrome-browser'
     ];
     
+    console.log('🔍 Verificando caminhos do Chrome...');
     for (const chromePath of possiblePaths) {
-      if (fs.existsSync(chromePath)) {
-        console.log('✅ Chrome encontrado em:', chromePath);
-        process.env.CHROME_BIN = chromePath;
-        return chromePath;
+      try {
+        if (fs.existsSync(chromePath)) {
+          console.log('✅ Chrome encontrado em:', chromePath);
+          return chromePath;
+        } else {
+          console.log(`❌ Chrome não encontrado em: ${chromePath}`);
+        }
+      } catch (pathError) {
+        console.log(`⚠️ Erro ao verificar caminho ${chromePath}:`, pathError.message);
       }
-    }
-    
-    // Tentar encontrar Chrome usando comando 'which'
-    try {
-      const { execSync } = require('child_process');
-      const chromePath = execSync('which google-chrome-stable', { encoding: 'utf8' }).trim();
-      if (chromePath && fs.existsSync(chromePath)) {
-        console.log('✅ Chrome encontrado via comando which:', chromePath);
-        process.env.CHROME_BIN = chromePath;
-        return chromePath;
-      }
-    } catch (e) {
-      // Ignorar erro se o comando 'which' não funcionar
     }
     
     console.log('⚠️ Chrome não encontrado em caminhos específicos. Usando Chrome do Puppeteer...');
@@ -192,16 +174,16 @@ function buildClient(porta, chromePath = null) {
       '--mute-audio'
     ],
     headless: true,
-    timeout: 60000,
-    protocolTimeout: 60000,
+    timeout: 120000, // Aumentado para 2 minutos
+    protocolTimeout: 120000, // Aumentado para 2 minutos
   };
 
-  // Adicionar executablePath apenas se o Chrome for encontrado
+  // Adicionar executablePath apenas se o Chrome for encontrado E existir
   if (chromePath && fs.existsSync(chromePath)) {
     puppeteerConfig.executablePath = chromePath;
     console.log(`🧭 Configurando cliente para porta ${porta} com Chrome: ${chromePath}`);
   } else {
-    console.log(`🧭 Configurando cliente para porta ${porta} com Chrome do Puppeteer`);
+    console.log(`🧭 Configurando cliente para porta ${porta} com Chrome do Puppeteer (sem executablePath)`);
   }
 
   const client = new Client({
@@ -233,11 +215,26 @@ function buildClient(porta, chromePath = null) {
     console.log(`❌ Desconectado (porta ${porta}) → ${reason}`);
     connectionStatus.set(porta, false);
     qrCodes.set(porta, null);
-    try { await client.destroy(); } catch (_) {}
+    try { 
+      await client.destroy(); 
+    } catch (destroyError) {
+      console.log(`⚠️ Erro ao destruir cliente (porta ${porta}):`, destroyError.message);
+    }
     clients.delete(porta);
+    
+    // Tentar reconectar após 5 segundos
     setTimeout(() => {
       console.log(`🔄 Recriando cliente (porta ${porta})...`);
-      startClient(porta, null).catch(err => console.error(`Erro recriando ${porta}:`, err.message));
+      startClient(porta, null).catch(err => {
+        console.error(`❌ Erro recriando ${porta}:`, err.message);
+        // Tentar novamente após mais 10 segundos
+        setTimeout(() => {
+          console.log(`🔄 Segunda tentativa de recriação (porta ${porta})...`);
+          startClient(porta, null).catch(retryErr => {
+            console.error(`❌ Falha também na segunda tentativa de recriação ${porta}:`, retryErr.message);
+          });
+        }, 10000);
+      });
     }, 5000);
   });
 
@@ -263,13 +260,28 @@ async function startClient(porta, chromePath = null) {
   }
 
   console.log(`🚀 Iniciando WhatsApp client (porta ${porta}) [${CANAIS_CONFIG[porta].nome}]`);
-  const client = buildClient(porta, chromePath);
-  clients.set(porta, client);
-  connectionStatus.set(porta, false);
-  qrCodes.set(porta, null);
-
+  
   try {
+    const client = buildClient(porta, chromePath);
+    clients.set(porta, client);
+    connectionStatus.set(porta, false);
+    qrCodes.set(porta, null);
+
     await client.initialize();
+    
+    // Guard rail: checar estado real após inicialização
+    try {
+      const state = await client.getState();
+      lastState.set(porta, state || 'UNKNOWN');
+      connectionStatus.set(porta, state === 'CONNECTED');
+      console.log(`✅ Cliente inicializado com sucesso (porta ${porta}) - Estado: ${state}`);
+    } catch (stateError) {
+      console.log(`⚠️ Erro ao verificar estado (porta ${porta}):`, stateError.message);
+      lastState.set(porta, 'UNKNOWN');
+    }
+
+    return client;
+    
   } catch (err) {
     console.error(`❌ Erro ao inicializar (porta ${porta}):`, err.message);
     
@@ -359,6 +371,7 @@ async function startClient(porta, chromePath = null) {
         });
         
         await fallbackClient.initialize();
+        console.log(`✅ Cliente fallback inicializado com sucesso (porta ${porta})`);
         return fallbackClient;
         
       } catch (fallbackErr) {
@@ -438,6 +451,7 @@ async function startClient(porta, chromePath = null) {
           });
           
           await minimalClient.initialize();
+          console.log(`✅ Cliente mínimo inicializado com sucesso (porta ${porta})`);
           return minimalClient;
           
         } catch (minimalErr) {
@@ -453,17 +467,6 @@ async function startClient(porta, chromePath = null) {
     clients.delete(porta);
     throw err;
   }
-
-  // Guard rail: checar estado real após inicialização
-  try {
-    const state = await client.getState();
-    lastState.set(porta, state || 'UNKNOWN');
-    connectionStatus.set(porta, state === 'CONNECTED');
-  } catch {
-    lastState.set(porta, 'UNKNOWN');
-  }
-
-  return client;
 }
 
 // ---------- Util ----------
@@ -472,31 +475,68 @@ function getPortFromQuery(req) {
   return parseInt(url.searchParams.get('port')) || 3000;
 }
 
+// ---------- Validação de Configuração ----------
+function validateConfiguration() {
+  console.log('🔍 Validando configuração...');
+  
+  // Verificar se as portas estão configuradas
+  const configuredPorts = Object.keys(CANAIS_CONFIG).map(Number);
+  if (configuredPorts.length === 0) {
+    throw new Error('Nenhuma porta configurada em CANAIS_CONFIG');
+  }
+  
+  console.log(`✅ Portas configuradas: ${configuredPorts.join(', ')}`);
+  
+  // Verificar se as pastas de sessão existem
+  try {
+    fs.ensureDirSync(SESSIONS_DIR);
+    console.log(`✅ Pasta de sessões criada/verificada: ${SESSIONS_DIR}`);
+  } catch (error) {
+    console.error(`❌ Erro ao criar pasta de sessões: ${error.message}`);
+    throw error;
+  }
+  
+  // Verificar se o whatsapp-web.js foi carregado corretamente
+  if (!Client || !LocalAuth || !MessageMedia) {
+    throw new Error('Falha ao carregar whatsapp-web.js - componentes essenciais não encontrados');
+  }
+  
+  console.log('✅ whatsapp-web.js carregado corretamente');
+  console.log('✅ Configuração validada com sucesso');
+}
+
 // ---------- Endpoints ----------
 app.get('/health', async (req, res) => {
-  const porta = getPortFromQuery(req);
-  res.json({
-    success: true,
-    status: 'OK',
-    connected: connectionStatus.get(porta) || false,
-    port: porta,
-    numero: CANAIS_CONFIG[porta]?.numero || 'N/A',
-    nome: CANAIS_CONFIG[porta]?.nome || 'N/A',
-    lastState: lastState.get(porta) || 'UNKNOWN',
-    timestamp: new Date().toISOString(),
-  });
+  try {
+    const porta = getPortFromQuery(req);
+    res.json({
+      success: true,
+      status: 'OK',
+      connected: connectionStatus.get(porta) || false,
+      port: porta,
+      numero: CANAIS_CONFIG[porta]?.numero || 'N/A',
+      nome: CANAIS_CONFIG[porta]?.nome || 'N/A',
+      lastState: lastState.get(porta) || 'UNKNOWN',
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error('❌ Erro no endpoint /health:', error.message);
+    res.status(500).json({ success: false, error: error.message });
+  }
 });
 
 app.get('/status', async (req, res) => {
-  const porta = getPortFromQuery(req);
   try {
+    const porta = getPortFromQuery(req);
     const client = clients.get(porta);
     if (client) {
       try {
         const state = await client.getState();
         lastState.set(porta, state || 'UNKNOWN');
         connectionStatus.set(porta, state === 'CONNECTED');
-      } catch (_) {}
+      } catch (stateError) {
+        console.log(`⚠️ Erro ao verificar estado (porta ${porta}):`, stateError.message);
+      }
     }
     res.json({
       success: true,
@@ -506,14 +546,15 @@ app.get('/status', async (req, res) => {
       nome: CANAIS_CONFIG[porta]?.nome || 'N/A',
       timestamp: new Date().toISOString(),
     });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+  } catch (error) {
+    console.error('❌ Erro no endpoint /status:', error.message);
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 
 app.get('/connect', async (req, res) => {
-  const porta = getPortFromQuery(req);
   try {
+    const porta = getPortFromQuery(req);
     await startClient(porta, null);
     res.json({
       success: true,
@@ -523,80 +564,110 @@ app.get('/connect', async (req, res) => {
       nome: CANAIS_CONFIG[porta]?.nome || 'N/A',
       timestamp: new Date().toISOString(),
     });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+  } catch (error) {
+    console.error('❌ Erro no endpoint /connect:', error.message);
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 
 app.get('/qr', async (req, res) => {
-  const porta = getPortFromQuery(req);
+  try {
+    const porta = getPortFromQuery(req);
 
-  // Se ainda não existe cliente, inicializa para gerar QR
-  if (!clients.get(porta)) {
-    try { await startClient(porta, null); } catch (_) {}
-    // espera um pouco pelo evento 'qr'
-    for (let i = 0; i < 10 && !qrCodes.get(porta); i++) {
-      await sleep(1000);
+    // Se ainda não existe cliente, inicializa para gerar QR
+    if (!clients.get(porta)) {
+      try { 
+        await startClient(porta, null); 
+      } catch (startError) {
+        console.log(`⚠️ Erro ao iniciar cliente para QR (porta ${porta}):`, startError.message);
+      }
+      // espera um pouco pelo evento 'qr'
+      for (let i = 0; i < 10 && !qrCodes.get(porta); i++) {
+        await sleep(1000);
+      }
     }
-  }
 
-  res.json({
-    success: true,
-    qr: qrCodes.get(porta) || 'QR indisponível. Tente novamente em alguns segundos.',
-    connected: connectionStatus.get(porta) || false,
-    port: porta,
-    numero: CANAIS_CONFIG[porta]?.numero || 'N/A',
-    nome: CANAIS_CONFIG[porta]?.nome || 'N/A',
-    timestamp: new Date().toISOString(),
-  });
+    res.json({
+      success: true,
+      qr: qrCodes.get(porta) || 'QR indisponível. Tente novamente em alguns segundos.',
+      connected: connectionStatus.get(porta) || false,
+      port: porta,
+      numero: CANAIS_CONFIG[porta]?.numero || 'N/A',
+      nome: CANAIS_CONFIG[porta]?.nome || 'N/A',
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error('❌ Erro no endpoint /qr:', error.message);
+    res.status(500).json({ success: false, error: error.message });
+  }
 });
 
 app.get('/qr.png', async (req, res) => {
-  const porta = getPortFromQuery(req);
-
-  if (!clients.get(porta)) {
-    try { await startClient(porta, null); } catch (_) {}
-    for (let i = 0; i < 10 && !qrCodes.get(porta); i++) {
-      await sleep(1000);
-    }
-  }
-
-  const qr = qrCodes.get(porta);
-  if (!qr) {
-    res.set('Content-Type', 'text/plain; charset=utf-8');
-    return res.status(200).send('QR indisponível. Tente novamente em alguns segundos.');
-  }
-
   try {
+    const porta = getPortFromQuery(req);
+
+    if (!clients.get(porta)) {
+      try { 
+        await startClient(porta, null); 
+      } catch (startError) {
+        console.log(`⚠️ Erro ao iniciar cliente para QR PNG (porta ${porta}):`, startError.message);
+      }
+      for (let i = 0; i < 10 && !qrCodes.get(porta); i++) {
+        await sleep(1000);
+      }
+    }
+
+    const qr = qrCodes.get(porta);
+    if (!qr) {
+      res.set('Content-Type', 'text/plain; charset=utf-8');
+      return res.status(200).send('QR indisponível. Tente novamente em alguns segundos.');
+    }
+
     res.set('Content-Type', 'image/png');
     await QRCode.toFileStream(res, qr, { width: 320, margin: 1 });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+  } catch (error) {
+    console.error('❌ Erro no endpoint /qr.png:', error.message);
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 
 // Envio de mensagens
 app.post('/send', async (req, res) => {
-  const porta = getPortFromQuery(req);
-  const { to, text, mediaBase64, mimeType, filename } = req.body || {};
-
-  if (!to) return res.status(400).json({ success: false, error: 'Campo "to" é obrigatório (ex: 559999999999@c.us).' });
-
-  if (!clients.get(porta) || !(connectionStatus.get(porta))) {
-    return res.status(400).json({ success: false, error: 'WhatsApp não está conectado.' });
-  }
-
   try {
+    const porta = getPortFromQuery(req);
+    const { to, text, mediaBase64, mimeType, filename } = req.body || {};
+
+    if (!to) {
+      return res.status(400).json({ success: false, error: 'Campo "to" é obrigatório (ex: 559999999999@c.us).' });
+    }
+
+    if (!clients.get(porta) || !(connectionStatus.get(porta))) {
+      return res.status(400).json({ success: false, error: 'WhatsApp não está conectado.' });
+    }
+
     const client = clients.get(porta);
+    if (!client) {
+      return res.status(400).json({ success: false, error: 'Cliente não encontrado.' });
+    }
 
     let result;
     if (mediaBase64 && mimeType && filename) {
       // Envio de mídia em base64
-      const media = new MessageMedia(mimeType, mediaBase64, filename);
-      result = await client.sendMessage(to, media, { caption: text || '' });
+      try {
+        const media = new MessageMedia(mimeType, mediaBase64, filename);
+        result = await client.sendMessage(to, media, { caption: text || '' });
+      } catch (mediaError) {
+        console.error(`❌ Erro ao enviar mídia (porta ${porta}):`, mediaError.message);
+        return res.status(500).json({ success: false, error: `Erro ao enviar mídia: ${mediaError.message}` });
+      }
     } else {
       // Envio de texto
-      result = await client.sendMessage(to, text || '');
+      try {
+        result = await client.sendMessage(to, text || '');
+      } catch (textError) {
+        console.error(`❌ Erro ao enviar texto (porta ${porta}):`, textError.message);
+        return res.status(500).json({ success: false, error: `Erro ao enviar texto: ${textError.message}` });
+      }
     }
 
     res.json({
@@ -607,10 +678,57 @@ app.post('/send', async (req, res) => {
       result: { id: result?.id?._serialized || null },
       timestamp: new Date().toISOString(),
     });
-  } catch (err) {
-    console.error(`❌ Erro ao enviar (porta ${porta}):`, err.message);
-    res.status(500).json({ success: false, error: err.message });
+  } catch (error) {
+    console.error(`❌ Erro geral ao enviar mensagem:`, error.message);
+    res.status(500).json({ success: false, error: error.message });
   }
+});
+
+// ---------- Limpeza de Recursos ----------
+process.on('SIGINT', async () => {
+  console.log('\n🛑 Recebido SIGINT. Encerrando servidor...');
+  await cleanup();
+  process.exit(0);
+});
+
+process.on('SIGTERM', async () => {
+  console.log('\n🛑 Recebido SIGTERM. Encerrando servidor...');
+  await cleanup();
+  process.exit(0);
+});
+
+async function cleanup() {
+  console.log('🧹 Limpando recursos...');
+  
+  // Encerrar todos os clientes
+  for (const [porta, client] of clients.entries()) {
+    try {
+      console.log(`🔄 Encerrando cliente (porta ${porta})...`);
+      await client.destroy();
+      console.log(`✅ Cliente encerrado (porta ${porta})`);
+    } catch (error) {
+      console.error(`❌ Erro ao encerrar cliente (porta ${porta}):`, error.message);
+    }
+  }
+  
+  // Limpar mapas
+  clients.clear();
+  qrCodes.clear();
+  connectionStatus.clear();
+  lastState.clear();
+  
+  console.log('✅ Limpeza concluída');
+}
+
+// ---------- Tratamento de Erros Não Capturados ----------
+process.on('uncaughtException', (error) => {
+  console.error('❌ Erro não capturado:', error);
+  console.error('Stack trace:', error.stack);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('❌ Promise rejeitada não tratada:', reason);
+  console.error('Promise:', promise);
 });
 
 // ---------- Servidor ----------
@@ -620,13 +738,40 @@ server.listen(PORT, '0.0.0.0', async () => {
   console.log(`🚀 Servidor rodando na porta ${PORT}`);
   console.log(`🌐 Health: http://localhost:${PORT}/health`);
 
-  // Configurar Puppeteer antes de iniciar os clientes
-  const chromePath = await setupPuppeteer();
+  try {
+    // Validar configuração
+    validateConfiguration();
+    
+    // Configurar Puppeteer antes de iniciar os clientes
+    console.log('🔧 Iniciando configuração do Puppeteer...');
+    const chromePath = await setupPuppeteer();
+    console.log('✅ Configuração do Puppeteer concluída');
 
-  // Sobe os 2 canais automaticamente
-  for (const porta of Object.keys(CANAIS_CONFIG).map(Number)) {
-    startClient(porta, chromePath).catch((err) =>
-      console.error(`Falha ao iniciar canal ${porta}:`, err.message)
-    );
+    // Sobe os 2 canais automaticamente
+    console.log('🚀 Iniciando canais automaticamente...');
+    for (const porta of Object.keys(CANAIS_CONFIG).map(Number)) {
+      console.log(`🔄 Iniciando canal ${porta}...`);
+      startClient(porta, chromePath).catch((err) => {
+        console.error(`❌ Falha ao iniciar canal ${porta}:`, err.message);
+        // Tentar novamente sem chromePath
+        setTimeout(() => {
+          console.log(`🔄 Tentando novamente canal ${porta} sem chromePath...`);
+          startClient(porta, null).catch((retryErr) => {
+            console.error(`❌ Falha também na segunda tentativa do canal ${porta}:`, retryErr.message);
+          });
+        }, 5000);
+      });
+    }
+  } catch (error) {
+    console.error('❌ Erro crítico ao inicializar servidor:', error.message);
+    // Tentar continuar mesmo com erro
+    console.log('🔄 Tentando continuar sem configuração específica do Puppeteer...');
+    
+    for (const porta of Object.keys(CANAIS_CONFIG).map(Number)) {
+      console.log(`🔄 Iniciando canal ${porta} sem configuração específica...`);
+      startClient(porta, null).catch((err) => {
+        console.error(`❌ Falha ao iniciar canal ${porta}:`, err.message);
+      });
+    }
   }
 });

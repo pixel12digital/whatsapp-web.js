@@ -17,6 +17,8 @@
 
 // Forçar uso do Chrome do sistema
 process.env.PUPPETEER_SKIP_CHROMIUM_DOWNLOAD = 'true';
+process.env.PUPPETEER_CACHE_DIR = '/tmp/puppeteer-cache';
+process.env.CHROME_BIN = '/usr/bin/google-chrome-stable';
 
 const http = require('http');
 const express = require('express');
@@ -80,54 +82,34 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
  */
 async function checkChromeAvailability() {
   try {
-    // Caminho CORRETO baseado nos logs do Render
-    const chromePath = process.env.CHROME_BIN || '/opt/render/.cache/puppeteer/chrome/linux-127.0.6533.88/chrome-linux64/chrome';
-    const cacheDir = process.env.PUPPETEER_CACHE_DIR || '/opt/render/.cache/puppeteer';
-    
     console.log('🔍 Verificando disponibilidade do Chrome...');
-    console.log('📍 Chrome path:', chromePath);
-    console.log('📁 Cache dir:', cacheDir);
     
-    // Verificar se o diretório de cache existe
-    if (!fs.existsSync(cacheDir)) {
-      console.log('⚠️ Diretório de cache não encontrado:', cacheDir);
-    }
-    
-    // Verificar se o Chrome existe no caminho principal
-    if (fs.existsSync(chromePath)) {
-      console.log('✅ Chrome encontrado em:', chromePath);
-      process.env.CHROME_BIN = chromePath;
-      return true;
-    }
-    
-    console.log('⚠️ Chrome não encontrado em:', chromePath);
-    
-    // Tentar encontrar o Chrome em outros locais possíveis
+    // Lista de possíveis caminhos do Chrome no sistema
     const possiblePaths = [
-      '/opt/render/.cache/puppeteer/chrome/linux-127.0.6533.88/chrome-linux64/chrome',
       '/usr/bin/google-chrome-stable',
       '/usr/bin/chromium-browser',
       '/usr/bin/chromium',
       '/usr/bin/google-chrome',
       '/snap/bin/chromium',
-      '/opt/google/chrome/chrome'
+      '/opt/google/chrome/chrome',
+      '/usr/bin/chrome',
+      '/usr/bin/chrome-browser'
     ];
     
     for (const path of possiblePaths) {
       if (fs.existsSync(path)) {
         console.log('✅ Chrome encontrado em:', path);
         process.env.CHROME_BIN = path;
-        return true;
+        return path;
       }
     }
     
-    // Se não encontrou em nenhum local específico, tentar usar o Chrome padrão do sistema
     console.log('⚠️ Chrome não encontrado em caminhos específicos. Tentando usar Chrome padrão do sistema...');
-    return false;
+    return null;
     
   } catch (error) {
     console.log('❌ Erro ao verificar Chrome:', error.message);
-    return false;
+    return null;
   }
 }
 
@@ -139,15 +121,15 @@ async function setupPuppeteer() {
   
   try {
     // Verificar se o Chrome está disponível
-    const isAvailable = await checkChromeAvailability();
+    const chromePath = await checkChromeAvailability();
     
-    if (!isAvailable) {
+    if (chromePath) {
+      console.log('✅ Chrome encontrado e configurado para Render.com:', chromePath);
+      return chromePath;
+    } else {
       console.warn('⚠️ Chrome não encontrado. Tentando usar configuração padrão...');
       return null;
     }
-    
-    console.log('✅ Chrome encontrado e configurado para Render.com');
-    return true;
     
   } catch (error) {
     console.error('❌ Erro ao configurar Puppeteer:', error.message);
@@ -162,10 +144,12 @@ function buildClient(porta) {
 
   // Forçar uso do Chrome do sistema
   process.env.PUPPETEER_SKIP_CHROMIUM_DOWNLOAD = 'true';
-  process.env.PUPPETEER_EXECUTABLE_PATH = undefined;
-  process.env.CHROME_BIN = undefined;
+  process.env.PUPPETEER_CACHE_DIR = '/tmp/puppeteer-cache';
+  
+  // Usar o Chrome encontrado ou o padrão
+  const chromePath = process.env.CHROME_BIN || '/usr/bin/google-chrome-stable';
 
-  // Configuração do Puppeteer otimizada para Render - SEM executablePath
+  // Configuração do Puppeteer otimizada para Render
   const puppeteerConfig = {
     // Argumentos do Chrome para ambiente Render
     args: [
@@ -193,9 +177,11 @@ function buildClient(porta) {
     headless: true,
     timeout: 60000,
     protocolTimeout: 60000,
+    // Forçar uso do Chrome do sistema
+    executablePath: chromePath,
   };
 
-  console.log(`🧭 Configurando cliente para porta ${porta} com Chrome do sistema (forçado)`);
+  console.log(`🧭 Configurando cliente para porta ${porta} com Chrome: ${chromePath}`);
 
   const client = new Client({
     puppeteer: puppeteerConfig,
@@ -304,6 +290,8 @@ async function startClient(porta) {
             headless: true,
             timeout: 60000,
             protocolTimeout: 60000,
+            // Forçar uso do Chrome do sistema
+            executablePath: process.env.CHROME_BIN || '/usr/bin/google-chrome-stable',
           },
           authStrategy: new LocalAuth({
             clientId: CANAIS_CONFIG[porta].sessionId,
@@ -382,6 +370,8 @@ async function startClient(porta) {
               headless: true,
               timeout: 120000,
               protocolTimeout: 120000,
+              // Forçar uso do Chrome do sistema
+              executablePath: process.env.CHROME_BIN || '/usr/bin/google-chrome-stable',
             },
             authStrategy: new LocalAuth({
               clientId: CANAIS_CONFIG[porta].sessionId,
